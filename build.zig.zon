@@ -7,6 +7,6 @@
         "build.zig",
         "build.zig.zon",
         "src",
-        "SDL3",
+        "third_party/SDL3",
     },
 }

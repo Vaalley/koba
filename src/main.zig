@@ -1,5 +1,6 @@
 const std = @import("std");
 const sdl = @import("sdl3");
+const vk = @import("vulkan");
 
 pub fn main() !void {
     if (!sdl.SDL_Init(sdl.SDL_INIT_VIDEO)) {
