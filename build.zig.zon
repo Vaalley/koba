@@ -1,0 +1,12 @@
+.{
+    .name = .koba,
+    .version = "0.0.0",
+    .fingerprint = 0xe3967be846750c8a,
+    .minimum_zig_version = "0.16.0",
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "SDL3",
+    },
+}
