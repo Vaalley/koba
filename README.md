@@ -30,7 +30,50 @@ include/             C wrappers used by Zig's translate-c
 third_party/SDL3/    Vendored SDL3 headers and Windows binaries (x86, x64, arm64)
 build.zig            Build script
 build.zig.zon        Package manifest
+specula.config.json  Defaults for the specula tutorial translator
 ```
+
+## Translating Vulkan tutorial pages
+
+Tutorial translation is handled by [specula](https://github.com/Vaalley/specula),
+a profile-driven CLI. This repo ships a `specula.config.json` that selects the
+`vulkan-cpp-to-zig-sdl3` profile and points `projectRoot` at the koba root, so
+translations are fed the real koba source as context.
+
+1. Clone and enter specula (separate from this repo):
+
+   ```sh
+   git clone https://github.com/Vaalley/specula.git
+   cd specula
+   ```
+
+2. Set your OpenRouter API key:
+
+   ```sh
+   # Windows (PowerShell)
+   $env:OPENROUTER_API_KEY="your-key-here"
+   # Linux/macOS
+   export OPENROUTER_API_KEY="your-key-here"
+   ```
+
+3. Fetch the Zig 0.16.0 reference and stdlib caches (once):
+
+   ```sh
+   deno task fetch-docs --profile vulkan-cpp-to-zig-sdl3
+   ```
+
+4. Translate a lesson, pointing `--project` at the koba repo so specula picks up
+   `specula.config.json` and scans the codebase:
+
+   ```sh
+   deno task translate https://docs.vulkan.org/tutorial/latest/03_Drawing_a_triangle/00_Setup/00_Base_code.html \
+     --project /path/to/koba \
+     --out ./out/Base_code.md
+   ```
+
+With `specula.config.json` present, `--profile` and the RAG budgets are applied
+automatically; you only need `--project` (or run specula from inside the koba
+root). See the specula README for the full flag reference.
 
 ## Notes
 

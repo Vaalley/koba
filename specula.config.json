@@ -1,0 +1,15 @@
+{
+  "defaultProfile": "vulkan-cpp-to-zig-sdl3",
+  "defaultModel": "anthropic/claude-sonnet-5",
+  "apiKeyEnvVar": "OPENROUTER_API_KEY",
+  "outputDir": "./docs",
+  "projectRoot": ".",
+  "temperature": 0.2,
+  "ragBudgets": {
+    "maxBytesPerFile": 16000,
+    "maxTotalBytes": 64000,
+    "maxFiles": 60,
+    "referenceLimit": 6,
+    "stdlibLimit": 24
+  }
+}

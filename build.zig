@@ -19,7 +19,7 @@ pub fn build(b: *std.Build) void {
     const sdl3_path = "third_party/SDL3";
 
     const sdl3_translate_c = b.addTranslateC(.{
-        .root_source_file = b.path(sdl3_path ++ "/include/SDL3/SDL.h"),
+        .root_source_file = b.path("include/sdl_wrapper.h"),
         .target = target,
         .optimize = optimize,
         .link_libc = true,
