@@ -47,6 +47,12 @@ const HelloTriangleApplication = struct {
                 std.log.err("Validation layers requested, but not available!", .{});
                 return error.ValidationLayersNotSupported;
             }
+
+            std.log.info("Running with validation layer(s):", .{});
+
+            for (validationLayers) |validationLayer| {
+                std.log.info("  {s}", .{validationLayer});
+            }
         }
 
         const appInfo = vk.VkApplicationInfo{
@@ -175,25 +181,25 @@ fn checkExtensionSupport(allocator: std.mem.Allocator, requiredExtensions: []con
 
     _ = vk.vkEnumerateInstanceExtensionProperties(null, &extensionCount, availableExtensions.ptr);
 
-    std.log.debug("available extensions:", .{});
+    std.log.debug("Available extensions:", .{});
     for (availableExtensions) |extension| {
         std.log.debug("\t{s}", .{std.mem.sliceTo(&extension.extensionName, 0)});
     }
 
     for (requiredExtensions) |requiredExtension| {
-        const required = std.mem.sliceTo(requiredExtension, 0);
+        const requiredName = std.mem.sliceTo(requiredExtension, 0);
 
         var found = false;
         for (availableExtensions) |extension| {
             const name = std.mem.sliceTo(&extension.extensionName, 0);
-            if (std.mem.eql(u8, name, required)) {
+            if (std.mem.eql(u8, name, requiredName)) {
                 found = true;
                 break;
             }
         }
 
         if (!found) {
-            std.log.err("Required extension not supported: {s}", .{required});
+            std.log.err("Required extension not supported: {s}", .{requiredName});
             return error.RequiredExtensionNotSupported;
         }
     }
@@ -209,12 +215,12 @@ fn checkValidationLayerSupport(allocator: std.mem.Allocator) !bool {
     _ = vk.vkEnumerateInstanceLayerProperties(&layerCount, availableLayers.ptr);
 
     for (validationLayers) |layerName| {
-        const required = std.mem.sliceTo(layerName, 0);
+        const requiredName = std.mem.sliceTo(layerName, 0);
         var found = false;
 
         for (availableLayers) |layerProperties| {
             const name = std.mem.sliceTo(&layerProperties.layerName, 0);
-            if (std.mem.eql(u8, name, required)) {
+            if (std.mem.eql(u8, name, requiredName)) {
                 found = true;
                 break;
             }
