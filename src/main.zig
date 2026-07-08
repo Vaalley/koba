@@ -18,6 +18,9 @@ const HelloTriangleApplication = struct {
     allocator: std.mem.Allocator,
     debug_messenger: vk.VkDebugUtilsMessengerEXT = null,
     physical_device: vk.VkPhysicalDevice = null,
+    device: vk.VkDevice = null,
+    graphics_family: u32 = 0,
+    graphics_queue: vk.VkQueue = null,
 
     // ---------------
     // |  Lifecycle  |
@@ -49,9 +52,19 @@ const HelloTriangleApplication = struct {
     }
 
     fn initVulkan(self: *HelloTriangleApplication) !void {
+        std.log.debug("Creating instance...", .{});
         try self.createInstance();
+
+        std.log.debug("Setting up debug messenger...", .{});
         try self.setupDebugMessenger();
+
+        std.log.debug("Picking physical device...", .{});
         try self.pickPhysicalDevice();
+
+        std.log.debug("Creating logical device...", .{});
+        try self.createLogicalDevice();
+
+        std.log.info("Vulkan initialization complete", .{});
     }
 
     fn mainLoop(self: *HelloTriangleApplication) !void {
@@ -69,14 +82,24 @@ const HelloTriangleApplication = struct {
     }
 
     fn cleanup(self: *HelloTriangleApplication) void {
+        std.log.debug("Cleaning up...", .{});
+
+        if (self.device != null) {
+            std.log.debug("Destroying logical device", .{});
+            vk.vkDestroyDevice(self.device, null);
+        }
+
         self.destroyDebugMessenger();
 
         if (self.instance != null) {
+            std.log.debug("Destroying instance", .{});
             vk.vkDestroyInstance(self.instance, null);
         }
 
         sdl.SDL_DestroyWindow(self.window);
         sdl.SDL_Quit();
+
+        std.log.debug("Cleanup complete", .{});
     }
 
     // --------------------
@@ -91,10 +114,10 @@ const HelloTriangleApplication = struct {
                 return error.ValidationLayersNotSupported;
             }
 
-            std.log.info("Running with validation layer(s):", .{});
+            std.log.debug("Running with validation layer(s):", .{});
 
             for (validation_layers) |validation_layer| {
-                std.log.info("  {s}", .{validation_layer});
+                std.log.debug("  {s}", .{validation_layer});
             }
         }
 
@@ -129,6 +152,8 @@ const HelloTriangleApplication = struct {
             std.log.err("Failed to create Vulkan instance (VkResult = {d})", .{result});
             return error.InstanceCreationFailed;
         }
+
+        std.log.info("Vulkan instance created (API version 1.4)", .{});
     }
 
     fn checkValidationLayerSupport(self: *HelloTriangleApplication) !bool {
@@ -256,6 +281,8 @@ const HelloTriangleApplication = struct {
             std.log.err("Failed to set up debug messenger (VkResult = {d})", .{result});
             return error.DebugMessengerCreationFailed;
         }
+
+        std.log.debug("Debug messenger set up", .{});
     }
 
     fn destroyDebugMessenger(self: *HelloTriangleApplication) void {
@@ -288,6 +315,8 @@ const HelloTriangleApplication = struct {
             return error.NoGpuWithVulkanSupport;
         }
 
+        std.log.debug("Found {d} Vulkan-capable GPU(s)", .{device_count});
+
         const physical_devices = try self.allocator.alloc(vk.VkPhysicalDevice, device_count);
         defer self.allocator.free(physical_devices);
 
@@ -319,6 +348,8 @@ const HelloTriangleApplication = struct {
         var features: vk.VkPhysicalDeviceFeatures = undefined;
         vk.vkGetPhysicalDeviceFeatures(physical_device, &features);
 
+        const device_name = std.mem.sliceTo(&properties.deviceName, 0);
+
         const supports_vulkan_1_3 = properties.apiVersion >= vk.VK_API_VERSION_1_3;
 
         var family_count: u32 = 0;
@@ -336,12 +367,21 @@ const HelloTriangleApplication = struct {
 
         const supports_required_features = self.checkRequiredFeatures(physical_device);
 
-        return supports_vulkan_1_3 and
+        const is_discrete_gpu = properties.deviceType == vk.VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
+        const has_geometry_shader = features.geometryShader == vk.VK_TRUE;
+
+        const suitable = supports_vulkan_1_3 and
             supports_graphics and
             supports_all_extensions and
             supports_required_features and
-            properties.deviceType == vk.VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU and
-            features.geometryShader == vk.VK_TRUE;
+            is_discrete_gpu and
+            has_geometry_shader;
+
+        if (!suitable) {
+            std.log.debug("Rejected '{s}': api_1_3={}, graphics={}, extensions={}, features={}, discrete={}, geometry={}", .{ device_name, supports_vulkan_1_3, supports_graphics, supports_all_extensions, supports_required_features, is_discrete_gpu, has_geometry_shader });
+        }
+
+        return suitable;
     }
 
     fn checkDeviceExtensionSupport(self: *HelloTriangleApplication, physical_device: vk.VkPhysicalDevice) !bool {
@@ -407,6 +447,86 @@ const HelloTriangleApplication = struct {
         return vulkan_1_1_features.shaderDrawParameters == vk.VK_TRUE and
             vulkan_1_3_features.dynamicRendering == vk.VK_TRUE and
             extended_dynamic_state.extendedDynamicState == vk.VK_TRUE;
+    }
+
+    // ------------------------------
+    // |  Logical Device Selection  |
+    // ------------------------------
+
+    fn createLogicalDevice(self: *HelloTriangleApplication) !void {
+        // 1. Find which queue family has graphics support
+        var family_count: u32 = 0;
+        vk.vkGetPhysicalDeviceQueueFamilyProperties(self.physical_device, &family_count, null);
+
+        const families = try self.allocator.alloc(vk.VkQueueFamilyProperties, family_count);
+        defer self.allocator.free(families);
+        vk.vkGetPhysicalDeviceQueueFamilyProperties(self.physical_device, &family_count, families.ptr);
+        std.log.debug("Device has {d} queue family(ies)", .{family_count});
+
+        self.graphics_family = for (families, 0..) |family, i| {
+            if ((family.queueFlags & vk.VK_QUEUE_GRAPHICS_BIT) != 0) break @intCast(i);
+        } else return error.NoGraphicsQueueFamily;
+
+        std.log.debug("Graphics queue family index: {d}", .{self.graphics_family});
+
+        // 2. Build the queue create info
+        const queue_priorities = [_]f32{0.5};
+        const device_queue_create_info = vk.VkDeviceQueueCreateInfo{
+            .sType = vk.VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+            .pNext = null,
+            .flags = 0,
+            .queueFamilyIndex = self.graphics_family,
+            .queueCount = 1,
+            .pQueuePriorities = &queue_priorities,
+        };
+
+        // 3. Build the pNext feature chain (enabling features)
+        var extended_dynamic_state_features: vk.VkPhysicalDeviceExtendedDynamicStateFeaturesEXT = .{
+            .sType = vk.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_FEATURES_EXT,
+            .pNext = null,
+            .extendedDynamicState = vk.VK_TRUE,
+        };
+        var vulkan_1_3_features: vk.VkPhysicalDeviceVulkan13Features = .{
+            .sType = vk.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
+            .pNext = &extended_dynamic_state_features,
+            .dynamicRendering = vk.VK_TRUE,
+        };
+        var vulkan_1_1_features: vk.VkPhysicalDeviceVulkan11Features = .{
+            .sType = vk.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES,
+            .pNext = &vulkan_1_3_features,
+            .shaderDrawParameters = vk.VK_TRUE,
+        };
+        var features2: vk.VkPhysicalDeviceFeatures2 = .{
+            .sType = vk.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
+            .pNext = &vulkan_1_1_features,
+            .features = std.mem.zeroes(vk.VkPhysicalDeviceFeatures),
+        };
+
+        // 4. Build the device create info and call vkCreateDevice
+        const device_create_info = vk.VkDeviceCreateInfo{
+            .sType = vk.VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+            .pNext = @ptrCast(&features2),
+            .flags = 0,
+            .queueCreateInfoCount = 1,
+            .pQueueCreateInfos = &[_]vk.VkDeviceQueueCreateInfo{device_queue_create_info},
+            .enabledLayerCount = 0,
+            .ppEnabledLayerNames = null,
+            .enabledExtensionCount = @intCast(required_device_extensions.len),
+            .ppEnabledExtensionNames = &required_device_extensions,
+            .pEnabledFeatures = null,
+        };
+
+        {
+            const result = vk.vkCreateDevice(self.physical_device, &device_create_info, null, &self.device);
+            if (result != vk.VK_SUCCESS) {
+                std.log.err("vkCreateDevice failed (VkResult = {d})", .{result});
+                return error.DeviceCreationFailed;
+            }
+        }
+
+        // 5. Get the graphics queue handle
+        vk.vkGetDeviceQueue(self.device, self.graphics_family, 0, &self.graphics_queue);
+        std.log.info("Logical device created successfully", .{});
     }
 };
 
