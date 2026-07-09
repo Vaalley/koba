@@ -17,6 +17,7 @@ const HelloTriangleApplication = struct {
     instance: vk.VkInstance = null,
     allocator: std.mem.Allocator,
     debug_messenger: vk.VkDebugUtilsMessengerEXT = null,
+    surface: vk.VkSurfaceKHR = null,
     physical_device: vk.VkPhysicalDevice = null,
     device: vk.VkDevice = null,
     graphics_family: u32 = 0,
@@ -58,6 +59,9 @@ const HelloTriangleApplication = struct {
         std.log.debug("Setting up debug messenger...", .{});
         try self.setupDebugMessenger();
 
+        std.log.debug("Creating window surface...", .{});
+        try self.createSurface();
+
         std.log.debug("Picking physical device...", .{});
         try self.pickPhysicalDevice();
 
@@ -87,6 +91,11 @@ const HelloTriangleApplication = struct {
         if (self.device != null) {
             std.log.debug("Destroying logical device", .{});
             vk.vkDestroyDevice(self.device, null);
+        }
+
+        if (self.surface != null) {
+            std.log.debug("Destroying window surface", .{});
+            vk.vkDestroySurfaceKHR(self.instance, self.surface, null);
         }
 
         self.destroyDebugMessenger();
@@ -297,6 +306,24 @@ const HelloTriangleApplication = struct {
         }
     }
 
+    // --------------------
+    // |  Window Surface  |
+    // --------------------
+
+    fn createSurface(self: *HelloTriangleApplication) !void {
+        if (!sdl.SDL_Vulkan_CreateSurface(
+            self.window,
+            @ptrCast(self.instance),
+            null,
+            @ptrCast(&self.surface),
+        )) {
+            std.log.err("Failed to create window surface: {s}", .{sdl.SDL_GetError()});
+            return error.SurfaceCreationFailed;
+        }
+
+        std.log.info("Window surface created", .{});
+    }
+
     // -------------------------------
     // |  Physical Device Selection  |
     // -------------------------------
@@ -454,7 +481,6 @@ const HelloTriangleApplication = struct {
     // ------------------------------
 
     fn createLogicalDevice(self: *HelloTriangleApplication) !void {
-        // 1. Find which queue family has graphics support
         var family_count: u32 = 0;
         vk.vkGetPhysicalDeviceQueueFamilyProperties(self.physical_device, &family_count, null);
 
@@ -464,12 +490,27 @@ const HelloTriangleApplication = struct {
         std.log.debug("Device has {d} queue family(ies)", .{family_count});
 
         self.graphics_family = for (families, 0..) |family, i| {
-            if ((family.queueFlags & vk.VK_QUEUE_GRAPHICS_BIT) != 0) break @intCast(i);
-        } else return error.NoGraphicsQueueFamily;
+            if ((family.queueFlags & vk.VK_QUEUE_GRAPHICS_BIT) == 0) continue;
+
+            var supports_present: vk.VkBool32 = vk.VK_FALSE;
+            {
+                const result = vk.vkGetPhysicalDeviceSurfaceSupportKHR(
+                    self.physical_device,
+                    @intCast(i),
+                    self.surface,
+                    &supports_present,
+                );
+                if (result != vk.VK_SUCCESS) {
+                    std.log.err("vkGetPhysicalDeviceSurfaceSupportKHR failed (VkResult = {d})", .{result});
+                    return error.SurfaceSupportQueryFailed;
+                }
+            }
+
+            if (supports_present == vk.VK_TRUE) break @intCast(i);
+        } else return error.NoGraphicsPresentQueueFamily;
 
         std.log.debug("Graphics queue family index: {d}", .{self.graphics_family});
 
-        // 2. Build the queue create info
         const queue_priorities = [_]f32{0.5};
         const device_queue_create_info = vk.VkDeviceQueueCreateInfo{
             .sType = vk.VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
@@ -480,7 +521,6 @@ const HelloTriangleApplication = struct {
             .pQueuePriorities = &queue_priorities,
         };
 
-        // 3. Build the pNext feature chain (enabling features)
         var extended_dynamic_state_features: vk.VkPhysicalDeviceExtendedDynamicStateFeaturesEXT = .{
             .sType = vk.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_FEATURES_EXT,
             .pNext = null,
@@ -502,7 +542,6 @@ const HelloTriangleApplication = struct {
             .features = std.mem.zeroes(vk.VkPhysicalDeviceFeatures),
         };
 
-        // 4. Build the device create info and call vkCreateDevice
         const device_create_info = vk.VkDeviceCreateInfo{
             .sType = vk.VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
             .pNext = @ptrCast(&features2),
@@ -524,7 +563,6 @@ const HelloTriangleApplication = struct {
             }
         }
 
-        // 5. Get the graphics queue handle
         vk.vkGetDeviceQueue(self.device, self.graphics_family, 0, &self.graphics_queue);
         std.log.info("Logical device created successfully", .{});
     }
