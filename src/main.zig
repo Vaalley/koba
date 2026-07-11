@@ -22,10 +22,14 @@ const HelloTriangleApplication = struct {
     device: vk.VkDevice = null,
     graphics_family: u32 = 0,
     graphics_queue: vk.VkQueue = null,
+    swap_chain: vk.VkSwapchainKHR = null,
+    swap_chain_images: []vk.VkImage = &.{},
+    swap_chain_surface_format: vk.VkSurfaceFormatKHR = undefined,
+    swap_chain_extent: vk.VkExtent2D = undefined,
 
-    // ---------------
+    // +-------------+
     // |  Lifecycle  |
-    // ---------------
+    // +-------------+
 
     pub fn run(self: *HelloTriangleApplication) !void {
         try self.initWindow();
@@ -68,6 +72,9 @@ const HelloTriangleApplication = struct {
         std.log.debug("Creating logical device...", .{});
         try self.createLogicalDevice();
 
+        std.log.debug("Creating swap chain...", .{});
+        try self.createSwapChain();
+
         std.log.info("Vulkan initialization complete", .{});
     }
 
@@ -87,6 +94,18 @@ const HelloTriangleApplication = struct {
 
     fn cleanup(self: *HelloTriangleApplication) void {
         std.log.debug("Cleaning up...", .{});
+
+        if (self.swap_chain_images.len != 0) {
+            std.log.debug("Freeing swap chain image slice", .{});
+            self.allocator.free(self.swap_chain_images);
+            self.swap_chain_images = &.{};
+        }
+
+        if (self.swap_chain != null and self.device != null) {
+            std.log.debug("Destroying swap chain", .{});
+            vk.vkDestroySwapchainKHR(self.device, self.swap_chain, null);
+            self.swap_chain = null;
+        }
 
         if (self.device != null) {
             std.log.debug("Destroying logical device", .{});
@@ -111,9 +130,9 @@ const HelloTriangleApplication = struct {
         std.log.debug("Cleanup complete", .{});
     }
 
-    // --------------------
+    // +------------------+
     // |  Instance Setup  |
-    // --------------------
+    // +------------------+
 
     fn createInstance(self: *HelloTriangleApplication) !void {
         if (enable_validation_layers) {
@@ -259,9 +278,9 @@ const HelloTriangleApplication = struct {
         return extensions.toOwnedSlice(self.allocator);
     }
 
-    // ---------------------
+    // +-------------------+
     // |  Debug Messenger  |
-    // ---------------------
+    // +-------------------+
 
     fn setupDebugMessenger(self: *HelloTriangleApplication) !void {
         if (!enable_validation_layers) return;
@@ -306,9 +325,9 @@ const HelloTriangleApplication = struct {
         }
     }
 
-    // --------------------
+    // +------------------+
     // |  Window Surface  |
-    // --------------------
+    // +------------------+
 
     fn createSurface(self: *HelloTriangleApplication) !void {
         if (!sdl.SDL_Vulkan_CreateSurface(
@@ -324,9 +343,9 @@ const HelloTriangleApplication = struct {
         std.log.info("Window surface created", .{});
     }
 
-    // -------------------------------
+    // +-----------------------------+
     // |  Physical Device Selection  |
-    // -------------------------------
+    // +-----------------------------+
 
     fn pickPhysicalDevice(self: *HelloTriangleApplication) !void {
         var device_count: u32 = 0;
@@ -476,9 +495,9 @@ const HelloTriangleApplication = struct {
             extended_dynamic_state.extendedDynamicState == vk.VK_TRUE;
     }
 
-    // ------------------------------
+    // +----------------------------+
     // |  Logical Device Selection  |
-    // ------------------------------
+    // +----------------------------+
 
     fn createLogicalDevice(self: *HelloTriangleApplication) !void {
         var family_count: u32 = 0;
@@ -566,7 +585,238 @@ const HelloTriangleApplication = struct {
         vk.vkGetDeviceQueue(self.device, self.graphics_family, 0, &self.graphics_queue);
         std.log.info("Logical device created successfully", .{});
     }
+
+    // +--------------+
+    // |  Swap Chain  |
+    // +--------------+
+
+    fn querySurfaceCapabilities(self: *HelloTriangleApplication) !vk.VkSurfaceCapabilitiesKHR {
+        var capabilities: vk.VkSurfaceCapabilitiesKHR = undefined;
+
+        const result = vk.vkGetPhysicalDeviceSurfaceCapabilitiesKHR(
+            self.physical_device,
+            self.surface,
+            &capabilities,
+        );
+        if (result != vk.VK_SUCCESS) {
+            return error.FailedToQuerySurfaceCapabilities;
+        }
+
+        return capabilities;
+    }
+
+    fn querySurfaceFormats(self: *HelloTriangleApplication) ![]vk.VkSurfaceFormatKHR {
+        var format_count: u32 = 0;
+
+        var result = vk.vkGetPhysicalDeviceSurfaceFormatsKHR(
+            self.physical_device,
+            self.surface,
+            &format_count,
+            null,
+        );
+        if (result != vk.VK_SUCCESS) {
+            return error.FailedToQuerySurfaceFormats;
+        }
+
+        if (format_count == 0) {
+            return error.NoSurfaceFormats;
+        }
+
+        const formats = try self.allocator.alloc(
+            vk.VkSurfaceFormatKHR,
+            format_count,
+        );
+        errdefer self.allocator.free(formats);
+
+        result = vk.vkGetPhysicalDeviceSurfaceFormatsKHR(
+            self.physical_device,
+            self.surface,
+            &format_count,
+            formats.ptr,
+        );
+        if (result != vk.VK_SUCCESS) {
+            return error.FailedToQuerySurfaceFormats;
+        }
+
+        return formats;
+    }
+
+    fn queryPresentModes(self: *HelloTriangleApplication) ![]vk.VkPresentModeKHR {
+        var mode_count: u32 = 0;
+
+        var result = vk.vkGetPhysicalDeviceSurfacePresentModesKHR(
+            self.physical_device,
+            self.surface,
+            &mode_count,
+            null,
+        );
+        if (result != vk.VK_SUCCESS) {
+            return error.FailedToQueryPresentModes;
+        }
+
+        if (mode_count == 0) {
+            return error.NoPresentModes;
+        }
+
+        const modes = try self.allocator.alloc(
+            vk.VkPresentModeKHR,
+            mode_count,
+        );
+        errdefer self.allocator.free(modes);
+
+        result = vk.vkGetPhysicalDeviceSurfacePresentModesKHR(
+            self.physical_device,
+            self.surface,
+            &mode_count,
+            modes.ptr,
+        );
+        if (result != vk.VK_SUCCESS) {
+            return error.FailedToQueryPresentModes;
+        }
+
+        return modes;
+    }
+
+    fn chooseSwapExtent(self: *HelloTriangleApplication, capabilities: vk.VkSurfaceCapabilitiesKHR) !vk.VkExtent2D {
+        if (capabilities.currentExtent.width != std.math.maxInt(u32)) {
+            return capabilities.currentExtent;
+        }
+
+        const window = self.window orelse return error.WindowNotCreated;
+
+        var width: c_int = 0;
+        var height: c_int = 0;
+
+        if (!sdl.SDL_GetWindowSizeInPixels(window, &width, &height)) {
+            std.log.err("SDL_GetWindowSizeInPixels failed: {s}", .{
+                sdl.SDL_GetError(),
+            });
+            return error.FailedToGetDrawableSize;
+        }
+
+        if (width <= 0 or height <= 0) {
+            return error.WindowHasNoDrawableSize;
+        }
+
+        const pixel_width: u32 = @intCast(width);
+        const pixel_height: u32 = @intCast(height);
+
+        return .{
+            .width = std.math.clamp(
+                pixel_width,
+                capabilities.minImageExtent.width,
+                capabilities.maxImageExtent.width,
+            ),
+            .height = std.math.clamp(
+                pixel_height,
+                capabilities.minImageExtent.height,
+                capabilities.maxImageExtent.height,
+            ),
+        };
+    }
+
+    fn createSwapChain(self: *HelloTriangleApplication) !void {
+        const capabilities = try self.querySurfaceCapabilities();
+
+        const formats = try self.querySurfaceFormats();
+        defer self.allocator.free(formats);
+
+        const present_modes = try self.queryPresentModes();
+        defer self.allocator.free(present_modes);
+
+        self.swap_chain_surface_format = chooseSwapSurfaceFormat(formats);
+
+        const present_mode = try chooseSwapPresentMode(present_modes);
+        self.swap_chain_extent = try self.chooseSwapExtent(capabilities);
+
+        const image_count = chooseSwapMinImageCount(capabilities);
+
+        const create_info = vk.VkSwapchainCreateInfoKHR{
+            .sType = vk.VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
+            .pNext = null,
+            .flags = 0,
+            .surface = self.surface,
+            .minImageCount = image_count,
+            .imageFormat = self.swap_chain_surface_format.format,
+            .imageColorSpace = self.swap_chain_surface_format.colorSpace,
+            .imageExtent = self.swap_chain_extent,
+            .imageArrayLayers = 1,
+            .imageUsage = vk.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+            .imageSharingMode = vk.VK_SHARING_MODE_EXCLUSIVE,
+            .queueFamilyIndexCount = 0,
+            .pQueueFamilyIndices = null,
+            .preTransform = capabilities.currentTransform,
+            .compositeAlpha = vk.VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
+            .presentMode = present_mode,
+            .clipped = vk.VK_TRUE,
+            .oldSwapchain = null,
+        };
+
+        var result = vk.vkCreateSwapchainKHR(
+            self.device,
+            &create_info,
+            null,
+            &self.swap_chain,
+        );
+        if (result != vk.VK_SUCCESS) {
+            return error.FailedToCreateSwapchain;
+        }
+
+        errdefer {
+            vk.vkDestroySwapchainKHR(self.device, self.swap_chain, null);
+            self.swap_chain = null;
+        }
+
+        var actual_image_count: u32 = 0;
+
+        result = vk.vkGetSwapchainImagesKHR(
+            self.device,
+            self.swap_chain,
+            &actual_image_count,
+            null,
+        );
+        if (result != vk.VK_SUCCESS) {
+            return error.FailedToGetSwapchainImages;
+        }
+
+        if (actual_image_count == 0) {
+            return error.NoSwapchainImages;
+        }
+
+        self.swap_chain_images = try self.allocator.alloc(
+            vk.VkImage,
+            actual_image_count,
+        );
+
+        errdefer {
+            self.allocator.free(self.swap_chain_images);
+            self.swap_chain_images = &.{};
+        }
+
+        result = vk.vkGetSwapchainImagesKHR(
+            self.device,
+            self.swap_chain,
+            &actual_image_count,
+            self.swap_chain_images.ptr,
+        );
+        if (result != vk.VK_SUCCESS) {
+            return error.FailedToGetSwapchainImages;
+        }
+
+        std.log.info(
+            "Created swap chain with {d} images at {d}x{d}",
+            .{
+                self.swap_chain_images.len,
+                self.swap_chain_extent.width,
+                self.swap_chain_extent.height,
+            },
+        );
+    }
 };
+
+// +--------+
+// |  Main  |
+// +--------+
 
 pub fn main() !void {
     var gpa = std.heap.DebugAllocator(.{}){};
@@ -579,6 +829,10 @@ pub fn main() !void {
         std.process.exit(1);
     };
 }
+
+// +----------------+
+// | Free Functions |
+// +----------------+
 
 fn debugCallback(
     message_severity: vk.VkDebugUtilsMessageSeverityFlagBitsEXT,
@@ -595,4 +849,48 @@ fn debugCallback(
     }
 
     return vk.VK_FALSE;
+}
+
+fn chooseSwapSurfaceFormat(available_formats: []const vk.VkSurfaceFormatKHR) vk.VkSurfaceFormatKHR {
+    for (available_formats) |format| {
+        if (format.format == vk.VK_FORMAT_B8G8R8A8_SRGB and
+            format.colorSpace == vk.VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
+        {
+            return format;
+        }
+    }
+
+    return available_formats[0];
+}
+
+fn chooseSwapPresentMode(available_modes: []const vk.VkPresentModeKHR) !vk.VkPresentModeKHR {
+    var has_fifo = false;
+
+    for (available_modes) |mode| {
+        if (mode == vk.VK_PRESENT_MODE_MAILBOX_KHR) {
+            return vk.VK_PRESENT_MODE_MAILBOX_KHR;
+        }
+
+        if (mode == vk.VK_PRESENT_MODE_FIFO_KHR) {
+            has_fifo = true;
+        }
+    }
+
+    if (has_fifo) {
+        return vk.VK_PRESENT_MODE_FIFO_KHR;
+    }
+
+    return error.NoFifoPresentMode;
+}
+
+fn chooseSwapMinImageCount(capabilities: vk.VkSurfaceCapabilitiesKHR) u32 {
+    var image_count = @max(3, capabilities.minImageCount);
+
+    if (capabilities.maxImageCount != 0 and
+        image_count > capabilities.maxImageCount)
+    {
+        image_count = capabilities.maxImageCount;
+    }
+
+    return image_count;
 }
