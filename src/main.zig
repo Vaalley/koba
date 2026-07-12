@@ -26,6 +26,7 @@ const HelloTriangleApplication = struct {
     swap_chain_images: []vk.VkImage = &.{},
     swap_chain_surface_format: vk.VkSurfaceFormatKHR = undefined,
     swap_chain_extent: vk.VkExtent2D = undefined,
+    swap_chain_image_views: []vk.VkImageView = &.{},
 
     // +-------------+
     // |  Lifecycle  |
@@ -75,6 +76,9 @@ const HelloTriangleApplication = struct {
         std.log.debug("Creating swap chain...", .{});
         try self.createSwapChain();
 
+        std.log.debug("Creating image views...", .{});
+        try self.createImageViews();
+
         std.log.info("Vulkan initialization complete", .{});
     }
 
@@ -94,6 +98,8 @@ const HelloTriangleApplication = struct {
 
     fn cleanup(self: *HelloTriangleApplication) void {
         std.log.debug("Cleaning up...", .{});
+
+        self.destroyImageViews();
 
         if (self.swap_chain_images.len != 0) {
             std.log.debug("Freeing swap chain image slice", .{});
@@ -811,6 +817,91 @@ const HelloTriangleApplication = struct {
                 self.swap_chain_extent.height,
             },
         );
+    }
+
+    fn createImageViews(self: *HelloTriangleApplication) !void {
+        if (self.swap_chain_images.len == 0) {
+            return error.NoSwapChainImages;
+        }
+
+        if (self.swap_chain_image_views.len != 0) {
+            return error.ImageViewsAlreadyCreated;
+        }
+
+        const image_views = try self.allocator.alloc(
+            vk.VkImageView,
+            self.swap_chain_images.len,
+        );
+
+        var created_count: usize = 0;
+
+        errdefer {
+            for (image_views[0..created_count]) |image_view| {
+                vk.vkDestroyImageView(self.device, image_view, null);
+            }
+
+            self.allocator.free(image_views);
+        }
+
+        var image_view_create_info = vk.VkImageViewCreateInfo{
+            .sType = vk.VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+            .pNext = null,
+            .flags = 0,
+            .image = null,
+            .viewType = vk.VK_IMAGE_VIEW_TYPE_2D,
+            .format = self.swap_chain_surface_format.format,
+            .components = .{
+                .r = vk.VK_COMPONENT_SWIZZLE_IDENTITY,
+                .g = vk.VK_COMPONENT_SWIZZLE_IDENTITY,
+                .b = vk.VK_COMPONENT_SWIZZLE_IDENTITY,
+                .a = vk.VK_COMPONENT_SWIZZLE_IDENTITY,
+            },
+            .subresourceRange = .{
+                .aspectMask = vk.VK_IMAGE_ASPECT_COLOR_BIT,
+                .baseMipLevel = 0,
+                .levelCount = 1,
+                .baseArrayLayer = 0,
+                .layerCount = 1,
+            },
+        };
+
+        for (self.swap_chain_images, 0..) |image, index| {
+            image_view_create_info.image = image;
+
+            const result = vk.vkCreateImageView(
+                self.device,
+                &image_view_create_info,
+                null,
+                &image_views[index],
+            );
+
+            if (result != vk.VK_SUCCESS) {
+                std.log.err("Failed to create image view for swap-chain image {d}", .{
+                    index,
+                });
+                return error.FailedToCreateImageView;
+            }
+
+            created_count += 1;
+        }
+
+        self.swap_chain_image_views = image_views;
+
+        std.log.debug("Created {d} swap-chain image views", .{
+            self.swap_chain_image_views.len,
+        });
+    }
+
+    fn destroyImageViews(self: *HelloTriangleApplication) void {
+        for (self.swap_chain_image_views) |image_view| {
+            vk.vkDestroyImageView(self.device, image_view, null);
+        }
+
+        if (self.swap_chain_image_views.len != 0) {
+            self.allocator.free(self.swap_chain_image_views);
+        }
+
+        self.swap_chain_image_views = &.{};
     }
 };
 
