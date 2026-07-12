@@ -9,10 +9,12 @@ import {
 } from "@std/path";
 import {
   analyzeSourceFeatures,
+  type DocsSection,
   fetchLessonPage,
   getRelevantStdlib,
   loadReferenceSections,
   type ProjectFile,
+  type RetrievalBudgets,
   scanProjectFiles,
   searchLangDocs,
 } from "./fetcher.ts";
@@ -38,17 +40,17 @@ Embedded tutorial translator for the koba game engine project.
 
 Usage:
   deno task fetch-docs [--force]
-  deno task translate <url-or-path> [options]
+  deno task translate <url-or-path>... [options]
 
 Run these tasks from the tools/specula directory, or use:
   cd tools/specula && deno task ...
 
 Commands:
   fetch-docs   Populate Zig reference and stdlib caches.
-  translate    Translate a Vulkan tutorial lesson into koba-style Zig.
+  translate    Translate one or more Vulkan tutorial lessons into koba-style Zig.
 
 Translate flags:
-  -o, --out <path>     Output Markdown file
+  -o, --out <path>     Output Markdown file (single source only)
   -m, --model <id>     Override the model (default: ${DEFAULT_MODEL})
   -k, --api-key <key>  API key override
   -p, --project <dir>  Project root for codebase context (default: koba root)
@@ -116,53 +118,47 @@ async function runFetchDocs(force: boolean): Promise<void> {
   });
 }
 
-async function runTranslate(args: Record<string, unknown>): Promise<void> {
-  const positional = (args._ ?? []) as Array<string | number>;
-  const source = String(positional[0] ?? "");
-  if (!source) {
-    throw new Error("translate requires a source URL or local path");
-  }
+interface TranslateContext {
+  config: Config;
+  modelOverride?: string;
+  force: boolean;
+  stream: boolean;
+  dryRun: boolean;
+  outPath?: string;
+  outDir: string;
+  budgets: RetrievalBudgets;
+  projectFiles: ProjectFile[];
+  allReferenceSections: DocsSection[];
+  apiKey: string;
+}
 
-  const config = { ...KOBA_CONFIG };
-  const modelOverride = typeof args.model === "string"
-    ? String(args.model)
-    : undefined;
+async function translateOne(
+  source: string,
+  ctx: TranslateContext,
+): Promise<void> {
+  const {
+    config,
+    modelOverride,
+    force,
+    stream,
+    dryRun,
+    outPath,
+    outDir,
+    budgets,
+    projectFiles,
+    allReferenceSections,
+    apiKey,
+  } = ctx;
 
-  const projectRoot = typeof args.project === "string"
-    ? String(args.project)
-    : KOBA_ROOT;
-  const force = Boolean(args.force);
-  const noProject = Boolean(args["no-project"]);
-  const stream = Boolean(args.stream);
-  const dryRun = Boolean(args["dry-run"]);
-  const outPath = typeof args.out === "string" ? String(args.out) : undefined;
-  const outDir = typeof args["out-dir"] === "string"
-    ? String(args["out-dir"])
-    : DEFAULT_OUT_DIR;
   const outputPath = deriveOutputPath(source, outDir, outPath);
-  const budgets = config.ragBudgets;
 
-  if (force) {
-    await loadReferenceSections(config, {
-      force: true,
-      cacheRoot: DEFAULT_CACHE_ROOT,
-    });
-    await getRelevantStdlib(config, Object.keys(config.stdlibModules), {
-      force: true,
-      cacheRoot: DEFAULT_CACHE_ROOT,
-    });
-  }
-
-  logProgress("fetching lesson");
+  logProgress(`fetching lesson: ${source}`);
   const lesson = await fetchLessonPage(source);
   logProgress("analyzing features");
   const analysis = analyzeSourceFeatures(lesson.codeBlocks, config);
   logProgress("retrieving reference docs");
   const referenceSections = searchLangDocs(
-    await loadReferenceSections(config, {
-      force,
-      cacheRoot: DEFAULT_CACHE_ROOT,
-    }),
+    allReferenceSections,
     analysis.concepts.join(" "),
     budgets.referenceLimit ?? 6,
   );
@@ -172,27 +168,6 @@ async function runTranslate(args: Record<string, unknown>): Promise<void> {
     cacheRoot: DEFAULT_CACHE_ROOT,
     limit: budgets.stdlibLimit ?? 24,
   });
-  logProgress("scanning project");
-  const scannedFiles = noProject
-    ? []
-    : await scanProjectFiles(resolve(projectRoot), config, budgets);
-  const projectFiles: ProjectFile[] = [];
-  try {
-    const contextContent = await Deno.readTextFile(CONTEXT_FILE);
-    projectFiles.push({
-      path: CONTEXT_FILE,
-      relativePath: "CONTEXT.md",
-      content: contextContent,
-      bytes: new TextEncoder().encode(contextContent).length,
-      truncated: false,
-      priority: -1,
-    });
-  } catch (error) {
-    if (!(error instanceof Deno.errors.NotFound)) {
-      throw error;
-    }
-  }
-  projectFiles.push(...scannedFiles);
   const promptInput = {
     config,
     lesson,
@@ -217,7 +192,6 @@ async function runTranslate(args: Record<string, unknown>): Promise<void> {
     return;
   }
 
-  const apiKey = String(args["api-key"] ?? envApiKey(config) ?? "");
   if (!apiKey) {
     throw new Error(
       `Missing API key. Provide -k/--api-key or set ${config.apiKeyEnvVar}.`,
@@ -241,6 +215,101 @@ async function runTranslate(args: Record<string, unknown>): Promise<void> {
   await Deno.mkdir(dirname(outputPath), { recursive: true }).catch(() => {});
   await Deno.writeTextFile(outputPath, markdown);
   logProgress(`wrote ${outputPath}`);
+}
+
+async function runTranslate(args: Record<string, unknown>): Promise<void> {
+  const positional = (args._ ?? []) as Array<string | number>;
+  const sources = positional.map(String).filter(Boolean);
+  if (sources.length === 0) {
+    throw new Error("translate requires a source URL or local path");
+  }
+
+  const config = { ...KOBA_CONFIG };
+  const modelOverride = typeof args.model === "string"
+    ? String(args.model)
+    : undefined;
+
+  const projectRoot = typeof args.project === "string"
+    ? String(args.project)
+    : KOBA_ROOT;
+  const force = Boolean(args.force);
+  const noProject = Boolean(args["no-project"]);
+  const stream = Boolean(args.stream);
+  const dryRun = Boolean(args["dry-run"]);
+  const outPath = typeof args.out === "string" ? String(args.out) : undefined;
+  const outDir = typeof args["out-dir"] === "string"
+    ? String(args["out-dir"])
+    : DEFAULT_OUT_DIR;
+
+  if (outPath && sources.length > 1) {
+    throw new Error(
+      "--out cannot be used with multiple sources; use --out-dir instead",
+    );
+  }
+
+  const budgets = config.ragBudgets;
+
+  if (force) {
+    await loadReferenceSections(config, {
+      force: true,
+      cacheRoot: DEFAULT_CACHE_ROOT,
+    });
+    await getRelevantStdlib(config, Object.keys(config.stdlibModules), {
+      force: true,
+      cacheRoot: DEFAULT_CACHE_ROOT,
+    });
+  }
+
+  logProgress("retrieving reference docs");
+  const allReferenceSections = await loadReferenceSections(config, {
+    force,
+    cacheRoot: DEFAULT_CACHE_ROOT,
+  });
+
+  logProgress("scanning project");
+  const scannedFiles = noProject
+    ? []
+    : await scanProjectFiles(resolve(projectRoot), config, budgets);
+  const projectFiles: ProjectFile[] = [];
+  try {
+    const contextContent = await Deno.readTextFile(CONTEXT_FILE);
+    projectFiles.push({
+      path: CONTEXT_FILE,
+      relativePath: "CONTEXT.md",
+      content: contextContent,
+      bytes: new TextEncoder().encode(contextContent).length,
+      truncated: false,
+      priority: -1,
+    });
+  } catch (error) {
+    if (!(error instanceof Deno.errors.NotFound)) {
+      throw error;
+    }
+  }
+  projectFiles.push(...scannedFiles);
+
+  const apiKey = String(args["api-key"] ?? envApiKey(config) ?? "");
+
+  const ctx: TranslateContext = {
+    config,
+    modelOverride,
+    force,
+    stream,
+    dryRun,
+    outPath,
+    outDir,
+    budgets,
+    projectFiles,
+    allReferenceSections,
+    apiKey,
+  };
+
+  for (const source of sources) {
+    if (sources.length > 1) {
+      logProgress(`translating ${source}`);
+    }
+    await translateOne(source, ctx);
+  }
 }
 
 async function main(): Promise<void> {

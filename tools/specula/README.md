@@ -24,11 +24,14 @@ cd tools/specula
 deno task fetch-docs
 
 # Translate a Vulkan tutorial lesson
-deno task translate <url-or-path>
+deno task translate <url-or-path>...
 
 # Examples
 deno task translate https://docs.vulkan.org/tutorial/latest/03_Drawing_a_triangle/01_Presentation/00_Swap_chain.html
 deno task translate ./my-local-lesson.md --out ./lesson.md
+
+# Translate multiple lessons in one invocation
+deno task translate https://docs.vulkan.org/tutorial/latest/03_Drawing_a_triangle/01_Presentation/00_Swap_chain.html https://docs.vulkan.org/tutorial/latest/03_Drawing_a_triangle/02_Rendering/01_Image_views.html
 ```
 
 Translation output defaults to `tools/specula/docs/<slug>.md`. Cache is stored
@@ -46,15 +49,17 @@ deno task fetch-docs [-f|--force]
 
 ### `translate`
 
-Translate a lesson into the target language and write the Markdown output.
+Translate one or more lessons into the target language and write the Markdown
+output. Shared work (reference docs, stdlib cache, project scan) is performed
+once and reused across all sources.
 
 ```bash
-deno task translate <url-or-path> [options]
+deno task translate <url-or-path>... [options]
 ```
 
 Flags:
 
-- `-o, --out <path>` — output Markdown file
+- `-o, --out <path>` — output Markdown file (single source only)
 - `-m, --model <id>` — override the LLM model
 - `-k, --api-key <key>` — API key override
 - `-p, --project <dir>` — project root for codebase context (default: koba root)
