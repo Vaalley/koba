@@ -8,6 +8,7 @@ const enable_validation_layers = builtin.mode == .Debug;
 const required_device_extensions = [_][*:0]const u8{
     "VK_KHR_swapchain",
 };
+const max_frames_in_flight: usize = 2;
 
 const HelloTriangleApplication = struct {
     const WIDTH: u32 = 1280;
@@ -31,10 +32,11 @@ const HelloTriangleApplication = struct {
     pipeline_layout: vk.VkPipelineLayout = null,
     graphics_pipeline: vk.VkPipeline = null,
     command_pool: vk.VkCommandPool = null,
-    command_buffer: vk.VkCommandBuffer = null,
-    present_complete_semaphore: vk.VkSemaphore = null,
-    render_finished_semaphore: vk.VkSemaphore = null,
-    draw_fence: vk.VkFence = null,
+    command_buffers: []vk.VkCommandBuffer = &.{},
+    present_complete_semaphores: []vk.VkSemaphore = &.{},
+    render_finished_semaphores: []vk.VkSemaphore = &.{},
+    in_flight_fences: []vk.VkFence = &.{},
+    frame_index: usize = 0,
 
     // +-------------+
     // |  Lifecycle  |
@@ -99,8 +101,8 @@ const HelloTriangleApplication = struct {
         std.log.debug("Creating command pool...", .{});
         try self.createCommandPool();
 
-        std.log.debug("Creating command buffer...", .{});
-        try self.createCommandBuffer();
+        std.log.debug("Creating command buffers...", .{});
+        try self.createCommandBuffers();
 
         std.log.debug("Creating synchronization objects...", .{});
         try self.createSyncObjects();
@@ -136,7 +138,17 @@ const HelloTriangleApplication = struct {
         std.log.debug("Cleaning up...", .{});
 
         self.destroySyncObjects();
-        self.destroyCommandResources();
+        self.destroyCommandBuffers();
+
+        if (self.command_pool != null and self.device != null) {
+            std.log.debug("Destroying command pool", .{});
+            vk.vkDestroyCommandPool(
+                self.device,
+                self.command_pool,
+                null,
+            );
+            self.command_pool = null;
+        }
 
         self.destroyGraphicsPipeline();
         self.destroyPipelineLayout();
@@ -1373,7 +1385,7 @@ const HelloTriangleApplication = struct {
         std.log.debug("Created Vulkan command pool", .{});
     }
 
-    fn createCommandBuffer(self: *HelloTriangleApplication) !void {
+    fn createCommandBuffers(self: *HelloTriangleApplication) !void {
         if (self.device == null) {
             return error.DeviceNotCreated;
         }
@@ -1382,8 +1394,17 @@ const HelloTriangleApplication = struct {
             return error.CommandPoolNotCreated;
         }
 
-        if (self.command_buffer != null) {
-            return error.CommandBufferAlreadyCreated;
+        if (self.command_buffers.len != 0) {
+            return error.CommandBuffersAlreadyCreated;
+        }
+
+        self.command_buffers = try self.allocator.alloc(
+            vk.VkCommandBuffer,
+            max_frames_in_flight,
+        );
+        errdefer {
+            self.allocator.free(self.command_buffers);
+            self.command_buffers = &.{};
         }
 
         const alloc_info = vk.VkCommandBufferAllocateInfo{
@@ -1391,25 +1412,29 @@ const HelloTriangleApplication = struct {
             .pNext = null,
             .commandPool = self.command_pool,
             .level = vk.VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-            .commandBufferCount = 1,
+            .commandBufferCount = @intCast(max_frames_in_flight),
         };
 
         const result = vk.vkAllocateCommandBuffers(
             self.device,
             &alloc_info,
-            &self.command_buffer,
+            self.command_buffers.ptr,
         );
 
         if (result != vk.VK_SUCCESS) {
-            std.log.err("Failed to allocate command buffer", .{});
-            return error.FailedToAllocateCommandBuffer;
+            std.log.err("Failed to allocate command buffers", .{});
+            return error.FailedToAllocateCommandBuffers;
         }
 
-        std.log.debug("Allocated primary command buffer", .{});
+        std.log.debug(
+            "Allocated {d} command buffers for frames in flight",
+            .{max_frames_in_flight},
+        );
     }
 
     fn transitionImageLayout(
         self: *HelloTriangleApplication,
+        command_buffer: vk.VkCommandBuffer,
         image_index: u32,
         old_layout: vk.VkImageLayout,
         new_layout: vk.VkImageLayout,
@@ -1418,10 +1443,6 @@ const HelloTriangleApplication = struct {
         src_stage_mask: vk.VkPipelineStageFlags2,
         dst_stage_mask: vk.VkPipelineStageFlags2,
     ) !void {
-        if (self.command_buffer == null) {
-            return error.CommandBufferNotCreated;
-        }
-
         const index: usize = @intCast(image_index);
 
         if (index >= self.swap_chain_images.len) {
@@ -1462,27 +1483,25 @@ const HelloTriangleApplication = struct {
         };
 
         vk.vkCmdPipelineBarrier2(
-            self.command_buffer,
+            command_buffer,
             &dependency_info,
         );
     }
 
-    fn recordCommandBuffer(self: *HelloTriangleApplication, image_index: u32) !void {
-        if (self.command_buffer == null) {
-            return error.CommandBufferNotCreated;
-        }
-
+    fn recordCommandBuffer(
+        self: *HelloTriangleApplication,
+        command_buffer: vk.VkCommandBuffer,
+        image_index: usize,
+    ) !void {
         if (self.graphics_pipeline == null) {
             return error.GraphicsPipelineNotCreated;
         }
 
-        const index: usize = @intCast(image_index);
-
-        if (index >= self.swap_chain_images.len) {
+        if (image_index >= self.swap_chain_images.len) {
             return error.SwapChainImageIndexOutOfRange;
         }
 
-        if (index >= self.swap_chain_image_views.len) {
+        if (image_index >= self.swap_chain_image_views.len) {
             return error.SwapChainImageViewIndexOutOfRange;
         }
 
@@ -1494,7 +1513,7 @@ const HelloTriangleApplication = struct {
         };
 
         var result = vk.vkBeginCommandBuffer(
-            self.command_buffer,
+            command_buffer,
             &begin_info,
         );
 
@@ -1504,11 +1523,12 @@ const HelloTriangleApplication = struct {
         }
 
         errdefer {
-            _ = vk.vkEndCommandBuffer(self.command_buffer);
+            _ = vk.vkEndCommandBuffer(command_buffer);
         }
 
         try self.transitionImageLayout(
-            image_index,
+            command_buffer,
+            @intCast(image_index),
             vk.VK_IMAGE_LAYOUT_UNDEFINED,
             vk.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
             0,
@@ -1526,7 +1546,7 @@ const HelloTriangleApplication = struct {
         const attachment_info = vk.VkRenderingAttachmentInfo{
             .sType = vk.VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
             .pNext = null,
-            .imageView = self.swap_chain_image_views[index],
+            .imageView = self.swap_chain_image_views[image_index],
             .imageLayout = vk.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
             .resolveMode = vk.VK_RESOLVE_MODE_NONE,
             .resolveImageView = null,
@@ -1556,12 +1576,12 @@ const HelloTriangleApplication = struct {
         };
 
         vk.vkCmdBeginRendering(
-            self.command_buffer,
+            command_buffer,
             &rendering_info,
         );
 
         vk.vkCmdBindPipeline(
-            self.command_buffer,
+            command_buffer,
             vk.VK_PIPELINE_BIND_POINT_GRAPHICS,
             self.graphics_pipeline,
         );
@@ -1576,7 +1596,7 @@ const HelloTriangleApplication = struct {
         };
 
         vk.vkCmdSetViewport(
-            self.command_buffer,
+            command_buffer,
             0,
             1,
             &viewport,
@@ -1591,24 +1611,25 @@ const HelloTriangleApplication = struct {
         };
 
         vk.vkCmdSetScissor(
-            self.command_buffer,
+            command_buffer,
             0,
             1,
             &scissor,
         );
 
         vk.vkCmdDraw(
-            self.command_buffer,
+            command_buffer,
             3,
             1,
             0,
             0,
         );
 
-        vk.vkCmdEndRendering(self.command_buffer);
+        vk.vkCmdEndRendering(command_buffer);
 
         try self.transitionImageLayout(
-            image_index,
+            command_buffer,
+            @intCast(image_index),
             vk.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
             vk.VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
             vk.VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
@@ -1617,7 +1638,7 @@ const HelloTriangleApplication = struct {
             vk.VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT,
         );
 
-        result = vk.vkEndCommandBuffer(self.command_buffer);
+        result = vk.vkEndCommandBuffer(command_buffer);
 
         if (result != vk.VK_SUCCESS) {
             std.log.err("Failed to finish command-buffer recording", .{});
@@ -1629,28 +1650,22 @@ const HelloTriangleApplication = struct {
         });
     }
 
-    fn destroyCommandResources(self: *HelloTriangleApplication) void {
-        if (self.command_buffer != null) {
-            if (self.device != null and self.command_pool != null) {
-                vk.vkFreeCommandBuffers(
-                    self.device,
-                    self.command_pool,
-                    1,
-                    &self.command_buffer,
-                );
-            }
-
-            self.command_buffer = null;
-        }
-
-        if (self.command_pool != null and self.device != null) {
-            vk.vkDestroyCommandPool(
+    fn destroyCommandBuffers(self: *HelloTriangleApplication) void {
+        if (self.device != null and
+            self.command_pool != null and
+            self.command_buffers.len != 0)
+        {
+            vk.vkFreeCommandBuffers(
                 self.device,
                 self.command_pool,
-                null,
+                @intCast(self.command_buffers.len),
+                self.command_buffers.ptr,
             );
+        }
 
-            self.command_pool = null;
+        if (self.command_buffers.len != 0) {
+            self.allocator.free(self.command_buffers);
+            self.command_buffers = &.{};
         }
     }
 
@@ -1663,11 +1678,42 @@ const HelloTriangleApplication = struct {
             return error.DeviceNotCreated;
         }
 
-        if (self.present_complete_semaphore != null or
-            self.render_finished_semaphore != null or
-            self.draw_fence != null)
+        if (self.swap_chain_images.len == 0) {
+            return error.NoSwapChainImages;
+        }
+
+        if (self.present_complete_semaphores.len != 0 or
+            self.render_finished_semaphores.len != 0 or
+            self.in_flight_fences.len != 0)
         {
-            return error.SynchronizationObjectsAlreadyCreated;
+            return error.SyncObjectsAlreadyCreated;
+        }
+
+        self.present_complete_semaphores = try self.allocator.alloc(
+            vk.VkSemaphore,
+            max_frames_in_flight,
+        );
+        errdefer {
+            self.allocator.free(self.present_complete_semaphores);
+            self.present_complete_semaphores = &.{};
+        }
+
+        self.render_finished_semaphores = try self.allocator.alloc(
+            vk.VkSemaphore,
+            self.swap_chain_images.len,
+        );
+        errdefer {
+            self.allocator.free(self.render_finished_semaphores);
+            self.render_finished_semaphores = &.{};
+        }
+
+        self.in_flight_fences = try self.allocator.alloc(
+            vk.VkFence,
+            max_frames_in_flight,
+        );
+        errdefer {
+            self.allocator.free(self.in_flight_fences);
+            self.in_flight_fences = &.{};
         }
 
         const semaphore_info = vk.VkSemaphoreCreateInfo{
@@ -1676,111 +1722,171 @@ const HelloTriangleApplication = struct {
             .flags = 0,
         };
 
-        var result = vk.vkCreateSemaphore(
-            self.device,
-            &semaphore_info,
-            null,
-            &self.present_complete_semaphore,
-        );
-
-        if (result != vk.VK_SUCCESS) {
-            std.log.err("Failed to create image-acquisition semaphore", .{});
-            return error.FailedToCreatePresentCompleteSemaphore;
-        }
-
-        errdefer {
-            vk.vkDestroySemaphore(
-                self.device,
-                self.present_complete_semaphore,
-                null,
-            );
-            self.present_complete_semaphore = null;
-        }
-
-        result = vk.vkCreateSemaphore(
-            self.device,
-            &semaphore_info,
-            null,
-            &self.render_finished_semaphore,
-        );
-
-        if (result != vk.VK_SUCCESS) {
-            std.log.err("Failed to create render-finished semaphore", .{});
-            return error.FailedToCreateRenderFinishedSemaphore;
-        }
-
-        errdefer {
-            vk.vkDestroySemaphore(
-                self.device,
-                self.render_finished_semaphore,
-                null,
-            );
-            self.render_finished_semaphore = null;
-        }
-
         const fence_info = vk.VkFenceCreateInfo{
             .sType = vk.VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
             .pNext = null,
             .flags = vk.VK_FENCE_CREATE_SIGNALED_BIT,
         };
 
-        result = vk.vkCreateFence(
-            self.device,
-            &fence_info,
-            null,
-            &self.draw_fence,
-        );
-
-        if (result != vk.VK_SUCCESS) {
-            std.log.err("Failed to create draw fence", .{});
-            return error.FailedToCreateDrawFence;
+        var created_present_complete: usize = 0;
+        errdefer {
+            while (created_present_complete > 0) {
+                created_present_complete -= 1;
+                vk.vkDestroySemaphore(
+                    self.device,
+                    self.present_complete_semaphores[created_present_complete],
+                    null,
+                );
+            }
         }
 
-        std.log.debug("Created frame synchronization objects", .{});
+        var created_render_finished: usize = 0;
+        errdefer {
+            while (created_render_finished > 0) {
+                created_render_finished -= 1;
+                vk.vkDestroySemaphore(
+                    self.device,
+                    self.render_finished_semaphores[created_render_finished],
+                    null,
+                );
+            }
+        }
+
+        var created_fences: usize = 0;
+        errdefer {
+            while (created_fences > 0) {
+                created_fences -= 1;
+                vk.vkDestroyFence(
+                    self.device,
+                    self.in_flight_fences[created_fences],
+                    null,
+                );
+            }
+        }
+
+        while (created_present_complete < max_frames_in_flight) : (created_present_complete += 1) {
+            const result = vk.vkCreateSemaphore(
+                self.device,
+                &semaphore_info,
+                null,
+                &self.present_complete_semaphores[created_present_complete],
+            );
+
+            if (result != vk.VK_SUCCESS) {
+                std.log.err(
+                    "Failed to create acquire semaphore for frame {d}",
+                    .{created_present_complete},
+                );
+                return error.FailedToCreateAcquireSemaphore;
+            }
+        }
+
+        while (created_render_finished < self.swap_chain_images.len) : (created_render_finished += 1) {
+            const result = vk.vkCreateSemaphore(
+                self.device,
+                &semaphore_info,
+                null,
+                &self.render_finished_semaphores[created_render_finished],
+            );
+
+            if (result != vk.VK_SUCCESS) {
+                std.log.err(
+                    "Failed to create render-finished semaphore for image {d}",
+                    .{created_render_finished},
+                );
+                return error.FailedToCreateRenderFinishedSemaphore;
+            }
+        }
+
+        while (created_fences < max_frames_in_flight) : (created_fences += 1) {
+            const result = vk.vkCreateFence(
+                self.device,
+                &fence_info,
+                null,
+                &self.in_flight_fences[created_fences],
+            );
+
+            if (result != vk.VK_SUCCESS) {
+                std.log.err(
+                    "Failed to create fence for frame {d}",
+                    .{created_fences},
+                );
+                return error.FailedToCreateInFlightFence;
+            }
+        }
+
+        std.log.debug(
+            "Created synchronization objects for {d} frames and {d} swap-chain images",
+            .{
+                max_frames_in_flight,
+                self.swap_chain_images.len,
+            },
+        );
     }
 
-    fn waitForPreviousFrame(self: *HelloTriangleApplication) !void {
-        const device = self.device orelse return error.DeviceNotCreated;
-        const fence = self.draw_fence orelse return error.DrawFenceNotCreated;
+    fn drawFrame(self: *HelloTriangleApplication) !void {
+        if (self.device == null) {
+            return error.DeviceNotCreated;
+        }
 
-        const result = vk.vkWaitForFences(
-            device,
+        if (self.graphics_queue == null) {
+            return error.GraphicsQueueNotCreated;
+        }
+
+        if (self.swap_chain == null) {
+            return error.SwapChainNotCreated;
+        }
+
+        if (self.command_buffers.len != max_frames_in_flight) {
+            return error.CommandBuffersNotReady;
+        }
+
+        if (self.present_complete_semaphores.len != max_frames_in_flight) {
+            return error.AcquireSemaphoresNotReady;
+        }
+
+        if (self.in_flight_fences.len != max_frames_in_flight) {
+            return error.InFlightFencesNotReady;
+        }
+
+        if (self.render_finished_semaphores.len != self.swap_chain_images.len) {
+            return error.RenderFinishedSemaphoresNotReady;
+        }
+
+        const frame_index = self.frame_index;
+
+        // 1. Wait for this frame slot's fence (previous use of this slot is done)
+        var result = vk.vkWaitForFences(
+            self.device,
             1,
-            &fence,
+            &self.in_flight_fences[frame_index],
             vk.VK_TRUE,
             std.math.maxInt(u64),
         );
 
         if (result != vk.VK_SUCCESS) {
-            std.log.err("Failed to wait for the previous frame", .{});
-            return error.FailedToWaitForDrawFence;
+            std.log.err(
+                "Failed to wait for fence for frame {d}",
+                .{frame_index},
+            );
+            return error.FailedToWaitForInFlightFence;
         }
-    }
 
-    fn acquireNextImage(self: *HelloTriangleApplication) !u32 {
-        const device = self.device orelse return error.DeviceNotCreated;
-        const swap_chain = self.swap_chain orelse return error.SwapChainNotCreated;
-        const semaphore = self.present_complete_semaphore orelse {
-            return error.PresentCompleteSemaphoreNotCreated;
-        };
-
+        // 2. Acquire the next swap-chain image
         var image_index: u32 = 0;
 
-        const result = vk.vkAcquireNextImageKHR(
-            device,
-            swap_chain,
+        result = vk.vkAcquireNextImageKHR(
+            self.device,
+            self.swap_chain,
             std.math.maxInt(u64),
-            semaphore,
+            self.present_complete_semaphores[frame_index],
             null,
             &image_index,
         );
 
         if (result == vk.VK_ERROR_OUT_OF_DATE_KHR) {
-            std.log.warn(
-                "Swap chain is out of date during image acquisition",
-                .{},
-            );
-            return error.SwapChainOutOfDate;
+            std.log.warn("Swap chain is out of date during image acquisition", .{});
+            return;
         }
 
         if (result != vk.VK_SUCCESS and result != vk.VK_SUBOPTIMAL_KHR) {
@@ -1788,203 +1894,163 @@ const HelloTriangleApplication = struct {
             return error.FailedToAcquireSwapChainImage;
         }
 
-        if (result == vk.VK_SUBOPTIMAL_KHR) {
-            std.log.warn(
-                "Swap chain is suboptimal during image acquisition",
-                .{},
-            );
-        }
+        const image_index_usize: usize = @intCast(image_index);
 
-        const index: usize = @intCast(image_index);
-
-        if (index >= self.swap_chain_images.len) {
+        if (image_index_usize >= self.swap_chain_images.len) {
             return error.AcquiredImageIndexOutOfBounds;
         }
 
-        if (index >= self.swap_chain_image_views.len) {
-            return error.AcquiredImageViewIndexOutOfBounds;
+        if (image_index_usize >= self.render_finished_semaphores.len) {
+            return error.RenderFinishedSemaphoreIndexOutOfBounds;
         }
 
-        return image_index;
-    }
-
-    fn resetDrawFence(self: *HelloTriangleApplication) !void {
-        const device = self.device orelse return error.DeviceNotCreated;
-        const fence = self.draw_fence orelse return error.DrawFenceNotCreated;
-
-        const result = vk.vkResetFences(
-            device,
+        // 3. Reset the fence (after successful acquisition, before submission)
+        result = vk.vkResetFences(
+            self.device,
             1,
-            &fence,
+            &self.in_flight_fences[frame_index],
         );
 
         if (result != vk.VK_SUCCESS) {
-            std.log.err("Failed to reset draw fence", .{});
-            return error.FailedToResetDrawFence;
+            std.log.err(
+                "Failed to reset fence for frame {d}",
+                .{frame_index},
+            );
+            return error.FailedToResetInFlightFence;
         }
-    }
 
-    fn submitCommandBuffer(self: *HelloTriangleApplication) !void {
-        const queue = self.graphics_queue orelse {
-            return error.GraphicsQueueNotCreated;
-        };
+        // 4. Reset and record the command buffer for this frame slot
+        result = vk.vkResetCommandBuffer(
+            self.command_buffers[frame_index],
+            0,
+        );
 
-        const command_buffer = self.command_buffer orelse {
-            return error.CommandBufferNotCreated;
-        };
+        if (result != vk.VK_SUCCESS) {
+            std.log.err(
+                "Failed to reset command buffer for frame {d}",
+                .{frame_index},
+            );
+            return error.FailedToResetCommandBuffer;
+        }
 
-        const present_complete_semaphore =
-            self.present_complete_semaphore orelse {
-                return error.PresentCompleteSemaphoreNotCreated;
-            };
+        try self.recordCommandBuffer(
+            self.command_buffers[frame_index],
+            image_index_usize,
+        );
 
-        const render_finished_semaphore =
-            self.render_finished_semaphore orelse {
-                return error.RenderFinishedSemaphoreNotCreated;
-            };
-
-        const draw_fence = self.draw_fence orelse {
-            return error.DrawFenceNotCreated;
-        };
-
+        // 5. Submit the command buffer
         const wait_stage: vk.VkPipelineStageFlags = vk.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
 
         const submit_info = vk.VkSubmitInfo{
             .sType = vk.VK_STRUCTURE_TYPE_SUBMIT_INFO,
             .pNext = null,
             .waitSemaphoreCount = 1,
-            .pWaitSemaphores = &present_complete_semaphore,
+            .pWaitSemaphores = &self.present_complete_semaphores[frame_index],
             .pWaitDstStageMask = &wait_stage,
             .commandBufferCount = 1,
-            .pCommandBuffers = &command_buffer,
+            .pCommandBuffers = &self.command_buffers[frame_index],
             .signalSemaphoreCount = 1,
-            .pSignalSemaphores = &render_finished_semaphore,
+            .pSignalSemaphores = &self.render_finished_semaphores[image_index_usize],
         };
 
-        const result = vk.vkQueueSubmit(
-            queue,
+        result = vk.vkQueueSubmit(
+            self.graphics_queue,
             1,
             &submit_info,
-            draw_fence,
+            self.in_flight_fences[frame_index],
         );
 
         if (result != vk.VK_SUCCESS) {
-            std.log.err("Failed to submit the command buffer", .{});
-            return error.FailedToSubmitCommandBuffer;
+            std.log.err(
+                "Failed to submit frame {d}",
+                .{frame_index},
+            );
+            return error.FailedToSubmitFrame;
         }
-    }
 
-    fn presentImage(self: *HelloTriangleApplication, image_index: u32) !void {
-        const queue = self.graphics_queue orelse {
-            return error.GraphicsQueueNotCreated;
-        };
-
-        const swap_chain = self.swap_chain orelse {
-            return error.SwapChainNotCreated;
-        };
-
-        const render_finished_semaphore =
-            self.render_finished_semaphore orelse {
-                return error.RenderFinishedSemaphoreNotCreated;
-            };
-
+        // 6. Present the rendered image
         const present_info = vk.VkPresentInfoKHR{
             .sType = vk.VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
             .pNext = null,
             .waitSemaphoreCount = 1,
-            .pWaitSemaphores = &render_finished_semaphore,
+            .pWaitSemaphores = &self.render_finished_semaphores[image_index_usize],
             .swapchainCount = 1,
-            .pSwapchains = &swap_chain,
+            .pSwapchains = &self.swap_chain,
             .pImageIndices = &image_index,
             .pResults = null,
         };
 
-        const result = vk.vkQueuePresentKHR(
-            queue,
+        result = vk.vkQueuePresentKHR(
+            self.graphics_queue,
             &present_info,
         );
 
         if (result == vk.VK_ERROR_OUT_OF_DATE_KHR) {
-            std.log.warn(
-                "Swap chain is out of date during presentation",
-                .{},
-            );
-            return error.SwapChainOutOfDate;
-        }
-
-        if (result == vk.VK_SUBOPTIMAL_KHR) {
-            std.log.warn(
-                "Swap chain is suboptimal during presentation",
-                .{},
-            );
+            std.log.warn("Swap chain is out of date during presentation", .{});
             return;
         }
 
-        if (result != vk.VK_SUCCESS) {
+        if (result == vk.VK_SUBOPTIMAL_KHR) {
+            std.log.warn("Swap chain is suboptimal during presentation", .{});
+        } else if (result != vk.VK_SUCCESS) {
             std.log.err("Failed to present the swap-chain image", .{});
             return error.FailedToPresentSwapChainImage;
         }
-    }
 
-    fn drawFrame(self: *HelloTriangleApplication) !void {
-        try self.waitForPreviousFrame();
-
-        const image_index = self.acquireNextImage() catch |err| {
-            if (err == error.SwapChainOutOfDate) {
-                std.log.warn(
-                    "Skipping frame because the swap chain is out of date",
-                    .{},
-                );
-                return;
-            }
-
-            return err;
-        };
-
-        try self.resetDrawFence();
-
-        try self.recordCommandBuffer(image_index);
-
-        try self.submitCommandBuffer();
-
-        self.presentImage(image_index) catch |err| {
-            if (err == error.SwapChainOutOfDate) {
-                std.log.warn(
-                    "Presentation requires swap-chain recreation",
-                    .{},
-                );
-                return;
-            }
-
-            return err;
-        };
+        // 7. Advance to the next frame slot
+        self.frame_index =
+            (self.frame_index + 1) % max_frames_in_flight;
     }
 
     fn destroySyncObjects(self: *HelloTriangleApplication) void {
-        const device = self.device orelse return;
+        if (self.device != null) {
+            for (self.present_complete_semaphores) |semaphore| {
+                if (semaphore != null) {
+                    vk.vkDestroySemaphore(
+                        self.device,
+                        semaphore,
+                        null,
+                    );
+                }
+            }
 
-        if (self.draw_fence != null) {
-            vk.vkDestroyFence(device, self.draw_fence, null);
-            self.draw_fence = null;
+            for (self.render_finished_semaphores) |semaphore| {
+                if (semaphore != null) {
+                    vk.vkDestroySemaphore(
+                        self.device,
+                        semaphore,
+                        null,
+                    );
+                }
+            }
+
+            for (self.in_flight_fences) |fence| {
+                if (fence != null) {
+                    vk.vkDestroyFence(
+                        self.device,
+                        fence,
+                        null,
+                    );
+                }
+            }
         }
 
-        if (self.render_finished_semaphore != null) {
-            vk.vkDestroySemaphore(
-                device,
-                self.render_finished_semaphore,
-                null,
-            );
-            self.render_finished_semaphore = null;
+        if (self.present_complete_semaphores.len != 0) {
+            self.allocator.free(self.present_complete_semaphores);
+            self.present_complete_semaphores = &.{};
         }
 
-        if (self.present_complete_semaphore != null) {
-            vk.vkDestroySemaphore(
-                device,
-                self.present_complete_semaphore,
-                null,
-            );
-            self.present_complete_semaphore = null;
+        if (self.render_finished_semaphores.len != 0) {
+            self.allocator.free(self.render_finished_semaphores);
+            self.render_finished_semaphores = &.{};
         }
+
+        if (self.in_flight_fences.len != 0) {
+            self.allocator.free(self.in_flight_fences);
+            self.in_flight_fences = &.{};
+        }
+
+        self.frame_index = 0;
     }
 };
 
