@@ -27,6 +27,7 @@ const HelloTriangleApplication = struct {
     swap_chain_surface_format: vk.VkSurfaceFormatKHR = undefined,
     swap_chain_extent: vk.VkExtent2D = undefined,
     swap_chain_image_views: []vk.VkImageView = &.{},
+    shader_module: vk.VkShaderModule = null,
 
     // +-------------+
     // |  Lifecycle  |
@@ -79,6 +80,12 @@ const HelloTriangleApplication = struct {
         std.log.debug("Creating image views...", .{});
         try self.createImageViews();
 
+        std.log.debug("Creating shader modules...", .{});
+        try self.createShaderModules();
+
+        std.log.debug("Creating graphics pipeline...", .{});
+        try self.createGraphicsPipeline();
+
         std.log.info("Vulkan initialization complete", .{});
     }
 
@@ -98,6 +105,8 @@ const HelloTriangleApplication = struct {
 
     fn cleanup(self: *HelloTriangleApplication) void {
         std.log.debug("Cleaning up...", .{});
+
+        self.destroyShaderModule();
 
         self.destroyImageViews();
 
@@ -902,6 +911,147 @@ const HelloTriangleApplication = struct {
         }
 
         self.swap_chain_image_views = &.{};
+    }
+
+    // +---------------------+
+    // |  Graphics Pipeline  |
+    // +---------------------+
+
+    fn createGraphicsPipeline(self: *HelloTriangleApplication) !void {
+        _ = self;
+
+        std.log.debug(
+            "Graphics-pipeline creation is reserved for the next lesson",
+            .{},
+        );
+    }
+
+    // +-----------------+
+    // |  Shader Module  |
+    // +-----------------+
+
+    fn readShaderCode(
+        self: *HelloTriangleApplication,
+        path: []const u8,
+    ) ![]u32 {
+        const io = std.Io.Threaded.global_single_threaded.io();
+
+        var file = try std.Io.Dir.cwd().openFile(io, path, .{});
+        defer file.close(io);
+
+        const file_stat = try file.stat(io);
+        const byte_count: usize = @intCast(file_stat.size);
+
+        if (byte_count == 0) {
+            return error.EmptyShaderFile;
+        }
+
+        if (byte_count % @sizeOf(u32) != 0) {
+            return error.ShaderFileSizeIsNotMultipleOfFour;
+        }
+
+        const word_count = byte_count / @sizeOf(u32);
+
+        const words = try self.allocator.alloc(u32, word_count);
+        errdefer self.allocator.free(words);
+
+        const bytes = std.mem.sliceAsBytes(words);
+        const bytes_read = try file.readPositionalAll(io, bytes, 0);
+
+        if (bytes_read != byte_count) {
+            return error.ShaderFileTruncated;
+        }
+
+        return words;
+    }
+
+    fn createShaderModule(self: *HelloTriangleApplication, code: []const u32) !vk.VkShaderModule {
+        if (code.len == 0) {
+            return error.EmptyShaderCode;
+        }
+
+        var create_info = vk.VkShaderModuleCreateInfo{
+            .sType = vk.VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+            .pNext = null,
+            .flags = 0,
+            .codeSize = code.len * @sizeOf(u32),
+            .pCode = code.ptr,
+        };
+
+        var shader_module: vk.VkShaderModule = null;
+
+        const result = vk.vkCreateShaderModule(
+            self.device,
+            &create_info,
+            null,
+            &shader_module,
+        );
+
+        if (result != vk.VK_SUCCESS) {
+            std.log.err("Failed to create Vulkan shader module", .{});
+            return error.FailedToCreateShaderModule;
+        }
+
+        return shader_module;
+    }
+
+    fn createShaderModules(self: *HelloTriangleApplication) !void {
+        const shader_code = try self.readShaderCode("shaders/slang.spv");
+        defer self.allocator.free(shader_code);
+
+        self.shader_module = try self.createShaderModule(shader_code);
+
+        std.log.debug("Created Vulkan shader module", .{});
+    }
+
+    fn makeVertexShaderStage(self: *HelloTriangleApplication) !vk.VkPipelineShaderStageCreateInfo {
+        if (self.shader_module == null) {
+            return error.ShaderModuleNotCreated;
+        }
+
+        return .{
+            .sType = vk.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+            .pNext = null,
+            .flags = 0,
+            .stage = vk.VK_SHADER_STAGE_VERTEX_BIT,
+            .module = self.shader_module,
+            .pName = "vertMain",
+            .pSpecializationInfo = null,
+        };
+    }
+
+    fn makeFragmentShaderStage(self: *HelloTriangleApplication) !vk.VkPipelineShaderStageCreateInfo {
+        if (self.shader_module == null) {
+            return error.ShaderModuleNotCreated;
+        }
+
+        return .{
+            .sType = vk.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+            .pNext = null,
+            .flags = 0,
+            .stage = vk.VK_SHADER_STAGE_FRAGMENT_BIT,
+            .module = self.shader_module,
+            .pName = "fragMain",
+            .pSpecializationInfo = null,
+        };
+    }
+
+    fn createShaderStages(self: *HelloTriangleApplication) ![2]vk.VkPipelineShaderStageCreateInfo {
+        return .{
+            try self.makeVertexShaderStage(),
+            try self.makeFragmentShaderStage(),
+        };
+    }
+
+    fn destroyShaderModule(self: *HelloTriangleApplication) void {
+        if (self.shader_module != null) {
+            vk.vkDestroyShaderModule(
+                self.device,
+                self.shader_module,
+                null,
+            );
+            self.shader_module = null;
+        }
     }
 };
 
