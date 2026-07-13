@@ -30,6 +30,8 @@ const HelloTriangleApplication = struct {
     shader_module: vk.VkShaderModule = null,
     pipeline_layout: vk.VkPipelineLayout = null,
     graphics_pipeline: vk.VkPipeline = null,
+    command_pool: vk.VkCommandPool = null,
+    command_buffer: vk.VkCommandBuffer = null,
 
     // +-------------+
     // |  Lifecycle  |
@@ -91,6 +93,12 @@ const HelloTriangleApplication = struct {
         std.log.debug("Creating graphics pipeline...", .{});
         try self.createGraphicsPipeline();
 
+        std.log.debug("Creating command pool...", .{});
+        try self.createCommandPool();
+
+        std.log.debug("Creating command buffer...", .{});
+        try self.createCommandBuffer();
+
         std.log.info("Vulkan initialization complete", .{});
     }
 
@@ -110,6 +118,8 @@ const HelloTriangleApplication = struct {
 
     fn cleanup(self: *HelloTriangleApplication) void {
         std.log.debug("Cleaning up...", .{});
+
+        self.destroyCommandResources();
 
         self.destroyGraphicsPipeline();
         self.destroyPipelineLayout();
@@ -1305,6 +1315,322 @@ const HelloTriangleApplication = struct {
                 null,
             );
             self.shader_module = null;
+        }
+    }
+
+    // +------------------+
+    // |  Command Buffer  |
+    // +------------------+
+
+    fn createCommandPool(self: *HelloTriangleApplication) !void {
+        if (self.device == null) {
+            return error.DeviceNotCreated;
+        }
+
+        if (self.command_pool != null) {
+            return error.CommandPoolAlreadyCreated;
+        }
+
+        const pool_info = vk.VkCommandPoolCreateInfo{
+            .sType = vk.VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+            .pNext = null,
+            .flags = vk.VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
+            .queueFamilyIndex = self.graphics_family,
+        };
+
+        const result = vk.vkCreateCommandPool(
+            self.device,
+            &pool_info,
+            null,
+            &self.command_pool,
+        );
+
+        if (result != vk.VK_SUCCESS) {
+            std.log.err("Failed to create command pool", .{});
+            return error.FailedToCreateCommandPool;
+        }
+
+        std.log.debug("Created Vulkan command pool", .{});
+    }
+
+    fn createCommandBuffer(self: *HelloTriangleApplication) !void {
+        if (self.device == null) {
+            return error.DeviceNotCreated;
+        }
+
+        if (self.command_pool == null) {
+            return error.CommandPoolNotCreated;
+        }
+
+        if (self.command_buffer != null) {
+            return error.CommandBufferAlreadyCreated;
+        }
+
+        const alloc_info = vk.VkCommandBufferAllocateInfo{
+            .sType = vk.VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+            .pNext = null,
+            .commandPool = self.command_pool,
+            .level = vk.VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+            .commandBufferCount = 1,
+        };
+
+        const result = vk.vkAllocateCommandBuffers(
+            self.device,
+            &alloc_info,
+            &self.command_buffer,
+        );
+
+        if (result != vk.VK_SUCCESS) {
+            std.log.err("Failed to allocate command buffer", .{});
+            return error.FailedToAllocateCommandBuffer;
+        }
+
+        std.log.debug("Allocated primary command buffer", .{});
+    }
+
+    fn transitionImageLayout(
+        self: *HelloTriangleApplication,
+        image_index: u32,
+        old_layout: vk.VkImageLayout,
+        new_layout: vk.VkImageLayout,
+        src_access_mask: vk.VkAccessFlags2,
+        dst_access_mask: vk.VkAccessFlags2,
+        src_stage_mask: vk.VkPipelineStageFlags2,
+        dst_stage_mask: vk.VkPipelineStageFlags2,
+    ) !void {
+        if (self.command_buffer == null) {
+            return error.CommandBufferNotCreated;
+        }
+
+        const index: usize = @intCast(image_index);
+
+        if (index >= self.swap_chain_images.len) {
+            return error.SwapChainImageIndexOutOfRange;
+        }
+
+        const barrier = vk.VkImageMemoryBarrier2{
+            .sType = vk.VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+            .pNext = null,
+            .srcStageMask = src_stage_mask,
+            .srcAccessMask = src_access_mask,
+            .dstStageMask = dst_stage_mask,
+            .dstAccessMask = dst_access_mask,
+            .oldLayout = old_layout,
+            .newLayout = new_layout,
+            .srcQueueFamilyIndex = vk.VK_QUEUE_FAMILY_IGNORED,
+            .dstQueueFamilyIndex = vk.VK_QUEUE_FAMILY_IGNORED,
+            .image = self.swap_chain_images[index],
+            .subresourceRange = .{
+                .aspectMask = vk.VK_IMAGE_ASPECT_COLOR_BIT,
+                .baseMipLevel = 0,
+                .levelCount = 1,
+                .baseArrayLayer = 0,
+                .layerCount = 1,
+            },
+        };
+
+        const dependency_info = vk.VkDependencyInfo{
+            .sType = vk.VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
+            .pNext = null,
+            .dependencyFlags = 0,
+            .memoryBarrierCount = 0,
+            .pMemoryBarriers = null,
+            .bufferMemoryBarrierCount = 0,
+            .pBufferMemoryBarriers = null,
+            .imageMemoryBarrierCount = 1,
+            .pImageMemoryBarriers = &barrier,
+        };
+
+        vk.vkCmdPipelineBarrier2(
+            self.command_buffer,
+            &dependency_info,
+        );
+    }
+
+    fn recordCommandBuffer(self: *HelloTriangleApplication, image_index: u32) !void {
+        if (self.command_buffer == null) {
+            return error.CommandBufferNotCreated;
+        }
+
+        if (self.graphics_pipeline == null) {
+            return error.GraphicsPipelineNotCreated;
+        }
+
+        const index: usize = @intCast(image_index);
+
+        if (index >= self.swap_chain_images.len) {
+            return error.SwapChainImageIndexOutOfRange;
+        }
+
+        if (index >= self.swap_chain_image_views.len) {
+            return error.SwapChainImageViewIndexOutOfRange;
+        }
+
+        const begin_info = vk.VkCommandBufferBeginInfo{
+            .sType = vk.VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+            .pNext = null,
+            .flags = 0,
+            .pInheritanceInfo = null,
+        };
+
+        var result = vk.vkBeginCommandBuffer(
+            self.command_buffer,
+            &begin_info,
+        );
+
+        if (result != vk.VK_SUCCESS) {
+            std.log.err("Failed to begin command-buffer recording", .{});
+            return error.FailedToBeginCommandBuffer;
+        }
+
+        errdefer {
+            _ = vk.vkEndCommandBuffer(self.command_buffer);
+        }
+
+        try self.transitionImageLayout(
+            image_index,
+            vk.VK_IMAGE_LAYOUT_UNDEFINED,
+            vk.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            0,
+            vk.VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+            0,
+            vk.VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+        );
+
+        const clear_value = vk.VkClearValue{
+            .color = .{
+                .float32 = .{ 0.0, 0.0, 0.0, 1.0 },
+            },
+        };
+
+        const attachment_info = vk.VkRenderingAttachmentInfo{
+            .sType = vk.VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+            .pNext = null,
+            .imageView = self.swap_chain_image_views[index],
+            .imageLayout = vk.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            .resolveMode = vk.VK_RESOLVE_MODE_NONE,
+            .resolveImageView = null,
+            .resolveImageLayout = vk.VK_IMAGE_LAYOUT_UNDEFINED,
+            .loadOp = vk.VK_ATTACHMENT_LOAD_OP_CLEAR,
+            .storeOp = vk.VK_ATTACHMENT_STORE_OP_STORE,
+            .clearValue = clear_value,
+        };
+
+        const rendering_info = vk.VkRenderingInfo{
+            .sType = vk.VK_STRUCTURE_TYPE_RENDERING_INFO,
+            .pNext = null,
+            .flags = 0,
+            .renderArea = .{
+                .offset = .{
+                    .x = 0,
+                    .y = 0,
+                },
+                .extent = self.swap_chain_extent,
+            },
+            .layerCount = 1,
+            .viewMask = 0,
+            .colorAttachmentCount = 1,
+            .pColorAttachments = &attachment_info,
+            .pDepthAttachment = null,
+            .pStencilAttachment = null,
+        };
+
+        vk.vkCmdBeginRendering(
+            self.command_buffer,
+            &rendering_info,
+        );
+
+        vk.vkCmdBindPipeline(
+            self.command_buffer,
+            vk.VK_PIPELINE_BIND_POINT_GRAPHICS,
+            self.graphics_pipeline,
+        );
+
+        const viewport = vk.VkViewport{
+            .x = 0.0,
+            .y = 0.0,
+            .width = @floatFromInt(self.swap_chain_extent.width),
+            .height = @floatFromInt(self.swap_chain_extent.height),
+            .minDepth = 0.0,
+            .maxDepth = 1.0,
+        };
+
+        vk.vkCmdSetViewport(
+            self.command_buffer,
+            0,
+            1,
+            &viewport,
+        );
+
+        const scissor = vk.VkRect2D{
+            .offset = .{
+                .x = 0,
+                .y = 0,
+            },
+            .extent = self.swap_chain_extent,
+        };
+
+        vk.vkCmdSetScissor(
+            self.command_buffer,
+            0,
+            1,
+            &scissor,
+        );
+
+        vk.vkCmdDraw(
+            self.command_buffer,
+            3,
+            1,
+            0,
+            0,
+        );
+
+        vk.vkCmdEndRendering(self.command_buffer);
+
+        try self.transitionImageLayout(
+            image_index,
+            vk.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            vk.VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+            vk.VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+            0,
+            vk.VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+            vk.VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT,
+        );
+
+        result = vk.vkEndCommandBuffer(self.command_buffer);
+
+        if (result != vk.VK_SUCCESS) {
+            std.log.err("Failed to finish command-buffer recording", .{});
+            return error.FailedToEndCommandBuffer;
+        }
+
+        std.log.debug("Recorded command buffer for swap-chain image {d}", .{
+            image_index,
+        });
+    }
+
+    fn destroyCommandResources(self: *HelloTriangleApplication) void {
+        if (self.command_buffer != null) {
+            if (self.device != null and self.command_pool != null) {
+                vk.vkFreeCommandBuffers(
+                    self.device,
+                    self.command_pool,
+                    1,
+                    &self.command_buffer,
+                );
+            }
+
+            self.command_buffer = null;
+        }
+
+        if (self.command_pool != null and self.device != null) {
+            vk.vkDestroyCommandPool(
+                self.device,
+                self.command_pool,
+                null,
+            );
+
+            self.command_pool = null;
         }
     }
 };
