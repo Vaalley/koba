@@ -28,6 +28,8 @@ const HelloTriangleApplication = struct {
     swap_chain_extent: vk.VkExtent2D = undefined,
     swap_chain_image_views: []vk.VkImageView = &.{},
     shader_module: vk.VkShaderModule = null,
+    pipeline_layout: vk.VkPipelineLayout = null,
+    graphics_pipeline: vk.VkPipeline = null,
 
     // +-------------+
     // |  Lifecycle  |
@@ -83,6 +85,9 @@ const HelloTriangleApplication = struct {
         std.log.debug("Creating shader modules...", .{});
         try self.createShaderModules();
 
+        std.log.debug("Creating pipeline layout...", .{});
+        try self.createPipelineLayout();
+
         std.log.debug("Creating graphics pipeline...", .{});
         try self.createGraphicsPipeline();
 
@@ -106,6 +111,8 @@ const HelloTriangleApplication = struct {
     fn cleanup(self: *HelloTriangleApplication) void {
         std.log.debug("Cleaning up...", .{});
 
+        self.destroyGraphicsPipeline();
+        self.destroyPipelineLayout();
         self.destroyShaderModule();
 
         self.destroyImageViews();
@@ -917,13 +924,260 @@ const HelloTriangleApplication = struct {
     // |  Graphics Pipeline  |
     // +---------------------+
 
-    fn createGraphicsPipeline(self: *HelloTriangleApplication) !void {
-        _ = self;
+    fn createPipelineLayout(self: *HelloTriangleApplication) !void {
+        if (self.device == null) {
+            return error.DeviceNotCreated;
+        }
 
-        std.log.debug(
-            "Graphics-pipeline creation is reserved for the next lesson",
-            .{},
+        if (self.pipeline_layout != null) {
+            return error.PipelineLayoutAlreadyCreated;
+        }
+
+        const create_info = vk.VkPipelineLayoutCreateInfo{
+            .sType = vk.VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+            .pNext = null,
+            .flags = 0,
+            .setLayoutCount = 0,
+            .pSetLayouts = null,
+            .pushConstantRangeCount = 0,
+            .pPushConstantRanges = null,
+        };
+
+        const result = vk.vkCreatePipelineLayout(
+            self.device,
+            &create_info,
+            null,
+            &self.pipeline_layout,
         );
+
+        if (result != vk.VK_SUCCESS) {
+            std.log.err("Failed to create Vulkan pipeline layout", .{});
+            return error.FailedToCreatePipelineLayout;
+        }
+
+        std.log.debug("Created Vulkan pipeline layout", .{});
+    }
+
+    fn createGraphicsPipeline(self: *HelloTriangleApplication) !void {
+        if (self.device == null) {
+            return error.DeviceNotCreated;
+        }
+
+        if (self.shader_module == null) {
+            return error.ShaderModuleNotCreated;
+        }
+
+        if (self.pipeline_layout == null) {
+            return error.PipelineLayoutNotCreated;
+        }
+
+        if (self.graphics_pipeline != null) {
+            return error.GraphicsPipelineAlreadyCreated;
+        }
+
+        const shader_stages = [_]vk.VkPipelineShaderStageCreateInfo{
+            .{
+                .sType = vk.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+                .pNext = null,
+                .flags = 0,
+                .stage = vk.VK_SHADER_STAGE_VERTEX_BIT,
+                .module = self.shader_module,
+                .pName = "vertMain",
+                .pSpecializationInfo = null,
+            },
+            .{
+                .sType = vk.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+                .pNext = null,
+                .flags = 0,
+                .stage = vk.VK_SHADER_STAGE_FRAGMENT_BIT,
+                .module = self.shader_module,
+                .pName = "fragMain",
+                .pSpecializationInfo = null,
+            },
+        };
+
+        const vertex_input = vk.VkPipelineVertexInputStateCreateInfo{
+            .sType = vk.VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+            .pNext = null,
+            .flags = 0,
+            .vertexBindingDescriptionCount = 0,
+            .pVertexBindingDescriptions = null,
+            .vertexAttributeDescriptionCount = 0,
+            .pVertexAttributeDescriptions = null,
+        };
+
+        const input_assembly = vk.VkPipelineInputAssemblyStateCreateInfo{
+            .sType = vk.VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
+            .pNext = null,
+            .flags = 0,
+            .topology = vk.VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
+            .primitiveRestartEnable = vk.VK_FALSE,
+        };
+
+        const viewport = vk.VkViewport{
+            .x = 0.0,
+            .y = 0.0,
+            .width = @floatFromInt(self.swap_chain_extent.width),
+            .height = @floatFromInt(self.swap_chain_extent.height),
+            .minDepth = 0.0,
+            .maxDepth = 1.0,
+        };
+
+        const scissor = vk.VkRect2D{
+            .offset = .{
+                .x = 0,
+                .y = 0,
+            },
+            .extent = self.swap_chain_extent,
+        };
+
+        const viewport_state = vk.VkPipelineViewportStateCreateInfo{
+            .sType = vk.VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
+            .pNext = null,
+            .flags = 0,
+            .viewportCount = 1,
+            .pViewports = &viewport,
+            .scissorCount = 1,
+            .pScissors = &scissor,
+        };
+
+        const rasterizer = vk.VkPipelineRasterizationStateCreateInfo{
+            .sType = vk.VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+            .pNext = null,
+            .flags = 0,
+            .depthClampEnable = vk.VK_FALSE,
+            .rasterizerDiscardEnable = vk.VK_FALSE,
+            .polygonMode = vk.VK_POLYGON_MODE_FILL,
+            .cullMode = vk.VK_CULL_MODE_BACK_BIT,
+            .frontFace = vk.VK_FRONT_FACE_COUNTER_CLOCKWISE,
+            .depthBiasEnable = vk.VK_FALSE,
+            .depthBiasConstantFactor = 0.0,
+            .depthBiasClamp = 0.0,
+            .depthBiasSlopeFactor = 0.0,
+            .lineWidth = 1.0,
+        };
+
+        const multisampling = vk.VkPipelineMultisampleStateCreateInfo{
+            .sType = vk.VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
+            .pNext = null,
+            .flags = 0,
+            .rasterizationSamples = vk.VK_SAMPLE_COUNT_1_BIT,
+            .sampleShadingEnable = vk.VK_FALSE,
+            .minSampleShading = 1.0,
+            .pSampleMask = null,
+            .alphaToCoverageEnable = vk.VK_FALSE,
+            .alphaToOneEnable = vk.VK_FALSE,
+        };
+
+        const color_blend_attachment = vk.VkPipelineColorBlendAttachmentState{
+            .blendEnable = vk.VK_FALSE,
+            .srcColorBlendFactor = vk.VK_BLEND_FACTOR_ONE,
+            .dstColorBlendFactor = vk.VK_BLEND_FACTOR_ZERO,
+            .colorBlendOp = vk.VK_BLEND_OP_ADD,
+            .srcAlphaBlendFactor = vk.VK_BLEND_FACTOR_ONE,
+            .dstAlphaBlendFactor = vk.VK_BLEND_FACTOR_ZERO,
+            .alphaBlendOp = vk.VK_BLEND_OP_ADD,
+            .colorWriteMask = vk.VK_COLOR_COMPONENT_R_BIT |
+                vk.VK_COLOR_COMPONENT_G_BIT |
+                vk.VK_COLOR_COMPONENT_B_BIT |
+                vk.VK_COLOR_COMPONENT_A_BIT,
+        };
+
+        const color_blending = vk.VkPipelineColorBlendStateCreateInfo{
+            .sType = vk.VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+            .pNext = null,
+            .flags = 0,
+            .logicOpEnable = vk.VK_FALSE,
+            .logicOp = vk.VK_LOGIC_OP_COPY,
+            .attachmentCount = 1,
+            .pAttachments = &color_blend_attachment,
+            .blendConstants = .{ 0.0, 0.0, 0.0, 0.0 },
+        };
+
+        const dynamic_states = [_]vk.VkDynamicState{
+            vk.VK_DYNAMIC_STATE_VIEWPORT,
+            vk.VK_DYNAMIC_STATE_SCISSOR,
+        };
+
+        const dynamic_state = vk.VkPipelineDynamicStateCreateInfo{
+            .sType = vk.VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
+            .pNext = null,
+            .flags = 0,
+            .dynamicStateCount = @intCast(dynamic_states.len),
+            .pDynamicStates = &dynamic_states,
+        };
+
+        var color_format = self.swap_chain_surface_format.format;
+
+        const rendering_info = vk.VkPipelineRenderingCreateInfo{
+            .sType = vk.VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
+            .pNext = null,
+            .viewMask = 0,
+            .colorAttachmentCount = 1,
+            .pColorAttachmentFormats = &color_format,
+            .depthAttachmentFormat = vk.VK_FORMAT_UNDEFINED,
+            .stencilAttachmentFormat = vk.VK_FORMAT_UNDEFINED,
+        };
+
+        const pipeline_create_info = vk.VkGraphicsPipelineCreateInfo{
+            .sType = vk.VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+            .pNext = &rendering_info,
+            .flags = 0,
+            .stageCount = @intCast(shader_stages.len),
+            .pStages = &shader_stages,
+            .pVertexInputState = &vertex_input,
+            .pInputAssemblyState = &input_assembly,
+            .pTessellationState = null,
+            .pViewportState = &viewport_state,
+            .pRasterizationState = &rasterizer,
+            .pMultisampleState = &multisampling,
+            .pDepthStencilState = null,
+            .pColorBlendState = &color_blending,
+            .pDynamicState = &dynamic_state,
+            .layout = self.pipeline_layout,
+            .renderPass = null,
+            .subpass = 0,
+            .basePipelineHandle = null,
+            .basePipelineIndex = -1,
+        };
+
+        const result = vk.vkCreateGraphicsPipelines(
+            self.device,
+            null,
+            1,
+            &pipeline_create_info,
+            null,
+            &self.graphics_pipeline,
+        );
+
+        if (result != vk.VK_SUCCESS) {
+            std.log.err("Failed to create Vulkan graphics pipeline", .{});
+            return error.FailedToCreateGraphicsPipeline;
+        }
+
+        std.log.info("Created Vulkan graphics pipeline", .{});
+    }
+
+    fn destroyGraphicsPipeline(self: *HelloTriangleApplication) void {
+        if (self.graphics_pipeline != null) {
+            vk.vkDestroyPipeline(
+                self.device,
+                self.graphics_pipeline,
+                null,
+            );
+            self.graphics_pipeline = null;
+        }
+    }
+
+    fn destroyPipelineLayout(self: *HelloTriangleApplication) void {
+        if (self.pipeline_layout != null) {
+            vk.vkDestroyPipelineLayout(
+                self.device,
+                self.pipeline_layout,
+                null,
+            );
+            self.pipeline_layout = null;
+        }
     }
 
     // +-----------------+
