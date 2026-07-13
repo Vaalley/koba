@@ -32,6 +32,9 @@ const HelloTriangleApplication = struct {
     graphics_pipeline: vk.VkPipeline = null,
     command_pool: vk.VkCommandPool = null,
     command_buffer: vk.VkCommandBuffer = null,
+    present_complete_semaphore: vk.VkSemaphore = null,
+    render_finished_semaphore: vk.VkSemaphore = null,
+    draw_fence: vk.VkFence = null,
 
     // +-------------+
     // |  Lifecycle  |
@@ -99,6 +102,9 @@ const HelloTriangleApplication = struct {
         std.log.debug("Creating command buffer...", .{});
         try self.createCommandBuffer();
 
+        std.log.debug("Creating synchronization objects...", .{});
+        try self.createSyncObjects();
+
         std.log.info("Vulkan initialization complete", .{});
     }
 
@@ -111,14 +117,25 @@ const HelloTriangleApplication = struct {
                     running = false;
                 }
             }
+
+            if (running) {
+                try self.drawFrame();
+            }
         }
 
-        _ = self;
+        if (self.device != null) {
+            const result = vk.vkDeviceWaitIdle(self.device);
+            if (result != vk.VK_SUCCESS) {
+                std.log.err("Failed to wait for the device to become idle", .{});
+                return error.FailedToWaitForDeviceIdle;
+            }
+        }
     }
 
     fn cleanup(self: *HelloTriangleApplication) void {
         std.log.debug("Cleaning up...", .{});
 
+        self.destroySyncObjects();
         self.destroyCommandResources();
 
         self.destroyGraphicsPipeline();
@@ -508,6 +525,7 @@ const HelloTriangleApplication = struct {
             .sType = vk.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
             .pNext = &extended_dynamic_state,
             .dynamicRendering = vk.VK_FALSE,
+            .synchronization2 = vk.VK_FALSE,
         };
         var vulkan_1_1_features: vk.VkPhysicalDeviceVulkan11Features = .{
             .sType = vk.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES,
@@ -524,6 +542,7 @@ const HelloTriangleApplication = struct {
 
         return vulkan_1_1_features.shaderDrawParameters == vk.VK_TRUE and
             vulkan_1_3_features.dynamicRendering == vk.VK_TRUE and
+            vulkan_1_3_features.synchronization2 == vk.VK_TRUE and
             extended_dynamic_state.extendedDynamicState == vk.VK_TRUE;
     }
 
@@ -581,6 +600,7 @@ const HelloTriangleApplication = struct {
             .sType = vk.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
             .pNext = &extended_dynamic_state_features,
             .dynamicRendering = vk.VK_TRUE,
+            .synchronization2 = vk.VK_TRUE,
         };
         var vulkan_1_1_features: vk.VkPhysicalDeviceVulkan11Features = .{
             .sType = vk.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES,
@@ -1059,7 +1079,7 @@ const HelloTriangleApplication = struct {
             .rasterizerDiscardEnable = vk.VK_FALSE,
             .polygonMode = vk.VK_POLYGON_MODE_FILL,
             .cullMode = vk.VK_CULL_MODE_BACK_BIT,
-            .frontFace = vk.VK_FRONT_FACE_COUNTER_CLOCKWISE,
+            .frontFace = vk.VK_FRONT_FACE_CLOCKWISE,
             .depthBiasEnable = vk.VK_FALSE,
             .depthBiasConstantFactor = 0.0,
             .depthBiasClamp = 0.0,
@@ -1631,6 +1651,339 @@ const HelloTriangleApplication = struct {
             );
 
             self.command_pool = null;
+        }
+    }
+
+    // +-------------------+
+    // |  Synchronization  |
+    // +-------------------+
+
+    fn createSyncObjects(self: *HelloTriangleApplication) !void {
+        if (self.device == null) {
+            return error.DeviceNotCreated;
+        }
+
+        if (self.present_complete_semaphore != null or
+            self.render_finished_semaphore != null or
+            self.draw_fence != null)
+        {
+            return error.SynchronizationObjectsAlreadyCreated;
+        }
+
+        const semaphore_info = vk.VkSemaphoreCreateInfo{
+            .sType = vk.VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+            .pNext = null,
+            .flags = 0,
+        };
+
+        var result = vk.vkCreateSemaphore(
+            self.device,
+            &semaphore_info,
+            null,
+            &self.present_complete_semaphore,
+        );
+
+        if (result != vk.VK_SUCCESS) {
+            std.log.err("Failed to create image-acquisition semaphore", .{});
+            return error.FailedToCreatePresentCompleteSemaphore;
+        }
+
+        errdefer {
+            vk.vkDestroySemaphore(
+                self.device,
+                self.present_complete_semaphore,
+                null,
+            );
+            self.present_complete_semaphore = null;
+        }
+
+        result = vk.vkCreateSemaphore(
+            self.device,
+            &semaphore_info,
+            null,
+            &self.render_finished_semaphore,
+        );
+
+        if (result != vk.VK_SUCCESS) {
+            std.log.err("Failed to create render-finished semaphore", .{});
+            return error.FailedToCreateRenderFinishedSemaphore;
+        }
+
+        errdefer {
+            vk.vkDestroySemaphore(
+                self.device,
+                self.render_finished_semaphore,
+                null,
+            );
+            self.render_finished_semaphore = null;
+        }
+
+        const fence_info = vk.VkFenceCreateInfo{
+            .sType = vk.VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+            .pNext = null,
+            .flags = vk.VK_FENCE_CREATE_SIGNALED_BIT,
+        };
+
+        result = vk.vkCreateFence(
+            self.device,
+            &fence_info,
+            null,
+            &self.draw_fence,
+        );
+
+        if (result != vk.VK_SUCCESS) {
+            std.log.err("Failed to create draw fence", .{});
+            return error.FailedToCreateDrawFence;
+        }
+
+        std.log.debug("Created frame synchronization objects", .{});
+    }
+
+    fn waitForPreviousFrame(self: *HelloTriangleApplication) !void {
+        const device = self.device orelse return error.DeviceNotCreated;
+        const fence = self.draw_fence orelse return error.DrawFenceNotCreated;
+
+        const result = vk.vkWaitForFences(
+            device,
+            1,
+            &fence,
+            vk.VK_TRUE,
+            std.math.maxInt(u64),
+        );
+
+        if (result != vk.VK_SUCCESS) {
+            std.log.err("Failed to wait for the previous frame", .{});
+            return error.FailedToWaitForDrawFence;
+        }
+    }
+
+    fn acquireNextImage(self: *HelloTriangleApplication) !u32 {
+        const device = self.device orelse return error.DeviceNotCreated;
+        const swap_chain = self.swap_chain orelse return error.SwapChainNotCreated;
+        const semaphore = self.present_complete_semaphore orelse {
+            return error.PresentCompleteSemaphoreNotCreated;
+        };
+
+        var image_index: u32 = 0;
+
+        const result = vk.vkAcquireNextImageKHR(
+            device,
+            swap_chain,
+            std.math.maxInt(u64),
+            semaphore,
+            null,
+            &image_index,
+        );
+
+        if (result == vk.VK_ERROR_OUT_OF_DATE_KHR) {
+            std.log.warn(
+                "Swap chain is out of date during image acquisition",
+                .{},
+            );
+            return error.SwapChainOutOfDate;
+        }
+
+        if (result != vk.VK_SUCCESS and result != vk.VK_SUBOPTIMAL_KHR) {
+            std.log.err("Failed to acquire a swap-chain image", .{});
+            return error.FailedToAcquireSwapChainImage;
+        }
+
+        if (result == vk.VK_SUBOPTIMAL_KHR) {
+            std.log.warn(
+                "Swap chain is suboptimal during image acquisition",
+                .{},
+            );
+        }
+
+        const index: usize = @intCast(image_index);
+
+        if (index >= self.swap_chain_images.len) {
+            return error.AcquiredImageIndexOutOfBounds;
+        }
+
+        if (index >= self.swap_chain_image_views.len) {
+            return error.AcquiredImageViewIndexOutOfBounds;
+        }
+
+        return image_index;
+    }
+
+    fn resetDrawFence(self: *HelloTriangleApplication) !void {
+        const device = self.device orelse return error.DeviceNotCreated;
+        const fence = self.draw_fence orelse return error.DrawFenceNotCreated;
+
+        const result = vk.vkResetFences(
+            device,
+            1,
+            &fence,
+        );
+
+        if (result != vk.VK_SUCCESS) {
+            std.log.err("Failed to reset draw fence", .{});
+            return error.FailedToResetDrawFence;
+        }
+    }
+
+    fn submitCommandBuffer(self: *HelloTriangleApplication) !void {
+        const queue = self.graphics_queue orelse {
+            return error.GraphicsQueueNotCreated;
+        };
+
+        const command_buffer = self.command_buffer orelse {
+            return error.CommandBufferNotCreated;
+        };
+
+        const present_complete_semaphore =
+            self.present_complete_semaphore orelse {
+                return error.PresentCompleteSemaphoreNotCreated;
+            };
+
+        const render_finished_semaphore =
+            self.render_finished_semaphore orelse {
+                return error.RenderFinishedSemaphoreNotCreated;
+            };
+
+        const draw_fence = self.draw_fence orelse {
+            return error.DrawFenceNotCreated;
+        };
+
+        const wait_stage: vk.VkPipelineStageFlags = vk.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+
+        const submit_info = vk.VkSubmitInfo{
+            .sType = vk.VK_STRUCTURE_TYPE_SUBMIT_INFO,
+            .pNext = null,
+            .waitSemaphoreCount = 1,
+            .pWaitSemaphores = &present_complete_semaphore,
+            .pWaitDstStageMask = &wait_stage,
+            .commandBufferCount = 1,
+            .pCommandBuffers = &command_buffer,
+            .signalSemaphoreCount = 1,
+            .pSignalSemaphores = &render_finished_semaphore,
+        };
+
+        const result = vk.vkQueueSubmit(
+            queue,
+            1,
+            &submit_info,
+            draw_fence,
+        );
+
+        if (result != vk.VK_SUCCESS) {
+            std.log.err("Failed to submit the command buffer", .{});
+            return error.FailedToSubmitCommandBuffer;
+        }
+    }
+
+    fn presentImage(self: *HelloTriangleApplication, image_index: u32) !void {
+        const queue = self.graphics_queue orelse {
+            return error.GraphicsQueueNotCreated;
+        };
+
+        const swap_chain = self.swap_chain orelse {
+            return error.SwapChainNotCreated;
+        };
+
+        const render_finished_semaphore =
+            self.render_finished_semaphore orelse {
+                return error.RenderFinishedSemaphoreNotCreated;
+            };
+
+        const present_info = vk.VkPresentInfoKHR{
+            .sType = vk.VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+            .pNext = null,
+            .waitSemaphoreCount = 1,
+            .pWaitSemaphores = &render_finished_semaphore,
+            .swapchainCount = 1,
+            .pSwapchains = &swap_chain,
+            .pImageIndices = &image_index,
+            .pResults = null,
+        };
+
+        const result = vk.vkQueuePresentKHR(
+            queue,
+            &present_info,
+        );
+
+        if (result == vk.VK_ERROR_OUT_OF_DATE_KHR) {
+            std.log.warn(
+                "Swap chain is out of date during presentation",
+                .{},
+            );
+            return error.SwapChainOutOfDate;
+        }
+
+        if (result == vk.VK_SUBOPTIMAL_KHR) {
+            std.log.warn(
+                "Swap chain is suboptimal during presentation",
+                .{},
+            );
+            return;
+        }
+
+        if (result != vk.VK_SUCCESS) {
+            std.log.err("Failed to present the swap-chain image", .{});
+            return error.FailedToPresentSwapChainImage;
+        }
+    }
+
+    fn drawFrame(self: *HelloTriangleApplication) !void {
+        try self.waitForPreviousFrame();
+
+        const image_index = self.acquireNextImage() catch |err| {
+            if (err == error.SwapChainOutOfDate) {
+                std.log.warn(
+                    "Skipping frame because the swap chain is out of date",
+                    .{},
+                );
+                return;
+            }
+
+            return err;
+        };
+
+        try self.resetDrawFence();
+
+        try self.recordCommandBuffer(image_index);
+
+        try self.submitCommandBuffer();
+
+        self.presentImage(image_index) catch |err| {
+            if (err == error.SwapChainOutOfDate) {
+                std.log.warn(
+                    "Presentation requires swap-chain recreation",
+                    .{},
+                );
+                return;
+            }
+
+            return err;
+        };
+    }
+
+    fn destroySyncObjects(self: *HelloTriangleApplication) void {
+        const device = self.device orelse return;
+
+        if (self.draw_fence != null) {
+            vk.vkDestroyFence(device, self.draw_fence, null);
+            self.draw_fence = null;
+        }
+
+        if (self.render_finished_semaphore != null) {
+            vk.vkDestroySemaphore(
+                device,
+                self.render_finished_semaphore,
+                null,
+            );
+            self.render_finished_semaphore = null;
+        }
+
+        if (self.present_complete_semaphore != null) {
+            vk.vkDestroySemaphore(
+                device,
+                self.present_complete_semaphore,
+                null,
+            );
+            self.present_complete_semaphore = null;
         }
     }
 };
