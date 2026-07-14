@@ -112,6 +112,11 @@ const HelloTriangleApplication = struct {
 
     fn mainLoop(self: *HelloTriangleApplication) !void {
         var running = true;
+
+        var last_tick: u64 = sdl.SDL_GetTicks();
+        var fps_timer: u64 = last_tick;
+        var frame_count: u32 = 0;
+
         while (running) {
             var event: sdl.SDL_Event = undefined;
             while (sdl.SDL_PollEvent(&event)) {
@@ -122,6 +127,32 @@ const HelloTriangleApplication = struct {
 
             if (running) {
                 try self.drawFrame();
+            }
+
+            // FPS tracking
+            const now = sdl.SDL_GetTicks();
+            last_tick = now;
+            frame_count += 1;
+
+            // Update title twice per second
+            if (now - fps_timer >= 500) {
+                const elapsed_ms = now - fps_timer;
+                const fps = @as(f64, @floatFromInt(frame_count)) * 1000.0 /
+                    @as(f64, @floatFromInt(elapsed_ms));
+                const avg_frame_time = @as(f64, @floatFromInt(elapsed_ms)) /
+                    @as(f64, @floatFromInt(frame_count));
+
+                var title_buf: [128]u8 = undefined;
+                const title = std.fmt.bufPrintZ(
+                    &title_buf,
+                    "Koba - FPS: {d:.1} | Frame: {d:.2}ms",
+                    .{ fps, avg_frame_time },
+                ) catch "Koba";
+
+                _ = sdl.SDL_SetWindowTitle(self.window, title.ptr);
+
+                fps_timer = now;
+                frame_count = 0;
             }
         }
 
@@ -2107,6 +2138,11 @@ fn chooseSwapPresentMode(available_modes: []const vk.VkPresentModeKHR) !vk.VkPre
     var has_fifo = false;
 
     for (available_modes) |mode| {
+        // Uncomment to enable immediate mode (no vsync -> no fps cap)
+        // if (mode == vk.VK_PRESENT_MODE_IMMEDIATE_KHR) {
+        //     return vk.VK_PRESENT_MODE_IMMEDIATE_KHR;
+        // }
+
         if (mode == vk.VK_PRESENT_MODE_MAILBOX_KHR) {
             return vk.VK_PRESENT_MODE_MAILBOX_KHR;
         }
