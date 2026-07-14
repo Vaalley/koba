@@ -28,6 +28,7 @@ const HelloTriangleApplication = struct {
     swap_chain_surface_format: vk.VkSurfaceFormatKHR = undefined,
     swap_chain_extent: vk.VkExtent2D = undefined,
     swap_chain_image_views: []vk.VkImageView = &.{},
+    framebuffer_resized: bool = false,
     shader_module: vk.VkShaderModule = null,
     pipeline_layout: vk.VkPipelineLayout = null,
     graphics_pipeline: vk.VkPipeline = null,
@@ -60,7 +61,7 @@ const HelloTriangleApplication = struct {
             "SDL3 + Vulkan",
             @intCast(WIDTH),
             @intCast(HEIGHT),
-            sdl.SDL_WINDOW_VULKAN,
+            sdl.SDL_WINDOW_VULKAN | sdl.SDL_WINDOW_RESIZABLE,
         ) orelse {
             std.log.err("Window Creation Failed: {s}", .{sdl.SDL_GetError()});
             return error.WindowCreationFailed;
@@ -110,6 +111,27 @@ const HelloTriangleApplication = struct {
         std.log.info("Vulkan initialization complete", .{});
     }
 
+    fn pollEvents(self: *HelloTriangleApplication) bool {
+        var event: sdl.SDL_Event = undefined;
+        var running = true;
+
+        while (sdl.SDL_PollEvent(&event)) {
+            switch (event.type) {
+                sdl.SDL_EVENT_QUIT => {
+                    running = false;
+                },
+
+                sdl.SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED, sdl.SDL_EVENT_WINDOW_RESIZED => {
+                    self.framebuffer_resized = true;
+                },
+
+                else => {},
+            }
+        }
+
+        return running;
+    }
+
     fn mainLoop(self: *HelloTriangleApplication) !void {
         var running = true;
 
@@ -118,16 +140,10 @@ const HelloTriangleApplication = struct {
         var frame_count: u32 = 0;
 
         while (running) {
-            var event: sdl.SDL_Event = undefined;
-            while (sdl.SDL_PollEvent(&event)) {
-                if (event.type == sdl.SDL_EVENT_QUIT) {
-                    running = false;
-                }
-            }
+            running = self.pollEvents();
+            if (!running) break;
 
-            if (running) {
-                try self.drawFrame();
-            }
+            try self.drawFrame();
 
             // FPS tracking
             const now = sdl.SDL_GetTicks();
@@ -185,19 +201,7 @@ const HelloTriangleApplication = struct {
         self.destroyPipelineLayout();
         self.destroyShaderModule();
 
-        self.destroyImageViews();
-
-        if (self.swap_chain_images.len != 0) {
-            std.log.debug("Freeing swap chain image slice", .{});
-            self.allocator.free(self.swap_chain_images);
-            self.swap_chain_images = &.{};
-        }
-
-        if (self.swap_chain != null and self.device != null) {
-            std.log.debug("Destroying swap chain", .{});
-            vk.vkDestroySwapchainKHR(self.device, self.swap_chain, null);
-            self.swap_chain = null;
-        }
+        self.cleanupSwapChain();
 
         if (self.device != null) {
             std.log.debug("Destroying logical device", .{});
@@ -991,6 +995,185 @@ const HelloTriangleApplication = struct {
         }
 
         self.swap_chain_image_views = &.{};
+    }
+
+    fn cleanupSwapChain(self: *HelloTriangleApplication) void {
+        if (self.device != null) {
+            for (self.swap_chain_image_views) |image_view| {
+                if (image_view != null) {
+                    vk.vkDestroyImageView(
+                        self.device,
+                        image_view,
+                        null,
+                    );
+                }
+            }
+        }
+
+        if (self.swap_chain_image_views.len != 0) {
+            self.allocator.free(self.swap_chain_image_views);
+            self.swap_chain_image_views = &.{};
+        }
+
+        if (self.swap_chain != null) {
+            vk.vkDestroySwapchainKHR(
+                self.device,
+                self.swap_chain,
+                null,
+            );
+            self.swap_chain = null;
+        }
+
+        if (self.swap_chain_images.len != 0) {
+            self.allocator.free(self.swap_chain_images);
+            self.swap_chain_images = &.{};
+        }
+    }
+
+    fn waitForDrawableSize(self: *HelloTriangleApplication) !void {
+        const window = self.window orelse return error.WindowNotCreated;
+
+        while (true) {
+            var width: c_int = 0;
+            var height: c_int = 0;
+
+            if (!sdl.SDL_GetWindowSizeInPixels(
+                window,
+                &width,
+                &height,
+            )) {
+                std.log.err(
+                    "SDL_GetWindowSizeInPixels failed: {s}",
+                    .{sdl.SDL_GetError()},
+                );
+                return error.FailedToGetDrawableSize;
+            }
+
+            if (width > 0 and height > 0) {
+                return;
+            }
+
+            var event: sdl.SDL_Event = undefined;
+            while (sdl.SDL_PollEvent(&event)) {
+                if (event.type == sdl.SDL_EVENT_QUIT) {
+                    return error.WindowClosedDuringResize;
+                }
+            }
+
+            sdl.SDL_Delay(16);
+        }
+    }
+
+    fn recreateSwapChain(self: *HelloTriangleApplication) !void {
+        if (self.device == null) {
+            return error.DeviceNotCreated;
+        }
+
+        try self.waitForDrawableSize();
+
+        const wait_result = vk.vkDeviceWaitIdle(self.device);
+        if (wait_result != vk.VK_SUCCESS) {
+            std.log.err(
+                "Failed to wait for the device before swap-chain recreation",
+                .{},
+            );
+            return error.FailedToWaitForDeviceIdle;
+        }
+
+        self.cleanupSwapChain();
+
+        try self.createSwapChain();
+        errdefer self.cleanupSwapChain();
+
+        try self.createImageViews();
+
+        self.framebuffer_resized = false;
+    }
+
+    fn acquireSwapChainImage(self: *HelloTriangleApplication, present_complete_semaphore: vk.VkSemaphore) !?u32 {
+        if (self.device == null) {
+            return error.DeviceNotCreated;
+        }
+
+        if (self.swap_chain == null) {
+            return error.SwapChainNotCreated;
+        }
+
+        var image_index: u32 = 0;
+
+        const result = vk.vkAcquireNextImageKHR(
+            self.device,
+            self.swap_chain,
+            std.math.maxInt(u64),
+            present_complete_semaphore,
+            null,
+            &image_index,
+        );
+
+        if (result == vk.VK_ERROR_OUT_OF_DATE_KHR) {
+            try self.recreateSwapChain();
+            return null;
+        }
+
+        if (result != vk.VK_SUCCESS and result != vk.VK_SUBOPTIMAL_KHR) {
+            std.log.err(
+                "Failed to acquire a swap-chain image",
+                .{},
+            );
+            return error.FailedToAcquireSwapChainImage;
+        }
+
+        if (result == vk.VK_SUBOPTIMAL_KHR) {
+            self.framebuffer_resized = true;
+        }
+
+        return image_index;
+    }
+
+    fn presentSwapChainImage(
+        self: *HelloTriangleApplication,
+        render_finished_semaphore: vk.VkSemaphore,
+        image_index: u32,
+    ) !void {
+        if (self.swap_chain == null) {
+            return error.SwapChainNotCreated;
+        }
+
+        var present_info = vk.VkPresentInfoKHR{
+            .sType = vk.VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+            .pNext = null,
+            .waitSemaphoreCount = 1,
+            .pWaitSemaphores = &render_finished_semaphore,
+            .swapchainCount = 1,
+            .pSwapchains = &self.swap_chain,
+            .pImageIndices = &image_index,
+            .pResults = null,
+        };
+
+        const result = vk.vkQueuePresentKHR(
+            self.graphics_queue,
+            &present_info,
+        );
+
+        if (result == vk.VK_ERROR_OUT_OF_DATE_KHR or
+            result == vk.VK_SUBOPTIMAL_KHR)
+        {
+            self.framebuffer_resized = true;
+            try self.recreateSwapChain();
+            return;
+        }
+
+        if (result != vk.VK_SUCCESS) {
+            std.log.err(
+                "Failed to present the swap-chain image",
+                .{},
+            );
+            return error.FailedToPresentSwapChainImage;
+        }
+
+        if (self.framebuffer_resized) {
+            try self.recreateSwapChain();
+        }
     }
 
     // +---------------------+
@@ -1903,27 +2086,10 @@ const HelloTriangleApplication = struct {
             return error.FailedToWaitForInFlightFence;
         }
 
-        // 2. Acquire the next swap-chain image
-        var image_index: u32 = 0;
-
-        result = vk.vkAcquireNextImageKHR(
-            self.device,
-            self.swap_chain,
-            std.math.maxInt(u64),
+        // 2. Acquire the next swap-chain image (may trigger recreation)
+        const image_index = (try self.acquireSwapChainImage(
             self.present_complete_semaphores[frame_index],
-            null,
-            &image_index,
-        );
-
-        if (result == vk.VK_ERROR_OUT_OF_DATE_KHR) {
-            std.log.warn("Swap chain is out of date during image acquisition", .{});
-            return;
-        }
-
-        if (result != vk.VK_SUCCESS and result != vk.VK_SUBOPTIMAL_KHR) {
-            std.log.err("Failed to acquire a swap-chain image", .{});
-            return error.FailedToAcquireSwapChainImage;
-        }
+        )) orelse return;
 
         const image_index_usize: usize = @intCast(image_index);
 
@@ -1935,7 +2101,7 @@ const HelloTriangleApplication = struct {
             return error.RenderFinishedSemaphoreIndexOutOfBounds;
         }
 
-        // 3. Reset the fence (after successful acquisition, before submission)
+        // 3. Reset the fence (AFTER successful acquisition, before submission)
         result = vk.vkResetFences(
             self.device,
             1,
@@ -1999,34 +2165,11 @@ const HelloTriangleApplication = struct {
             return error.FailedToSubmitFrame;
         }
 
-        // 6. Present the rendered image
-        const present_info = vk.VkPresentInfoKHR{
-            .sType = vk.VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
-            .pNext = null,
-            .waitSemaphoreCount = 1,
-            .pWaitSemaphores = &self.render_finished_semaphores[image_index_usize],
-            .swapchainCount = 1,
-            .pSwapchains = &self.swap_chain,
-            .pImageIndices = &image_index,
-            .pResults = null,
-        };
-
-        result = vk.vkQueuePresentKHR(
-            self.graphics_queue,
-            &present_info,
+        // 6. Present the rendered image (may trigger recreation)
+        try self.presentSwapChainImage(
+            self.render_finished_semaphores[image_index_usize],
+            image_index,
         );
-
-        if (result == vk.VK_ERROR_OUT_OF_DATE_KHR) {
-            std.log.warn("Swap chain is out of date during presentation", .{});
-            return;
-        }
-
-        if (result == vk.VK_SUBOPTIMAL_KHR) {
-            std.log.warn("Swap chain is suboptimal during presentation", .{});
-        } else if (result != vk.VK_SUCCESS) {
-            std.log.err("Failed to present the swap-chain image", .{});
-            return error.FailedToPresentSwapChainImage;
-        }
 
         // 7. Advance to the next frame slot
         self.frame_index =
