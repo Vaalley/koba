@@ -44,14 +44,47 @@ SDL3 is also raw C bindings:
 
 ## Existing application style
 
-The main struct is `HelloTriangleApplication` in `src/main.zig`. It holds:
+The main struct is `App` in `src/main.zig` (renamed from
+`HelloTriangleApplication`). It holds:
 
 - `allocator: std.mem.Allocator`
 - `window: ?*sdl.SDL_Window`
-- Vulkan handles: `instance`, `debug_messenger`, `surface`, `physical_device`,
-  `device`, `graphics_queue`
-- `graphics_family: u32`
-- Error handling via error unions (`!void`) and explicit `VkResult` checks.
+- Instance/device setup: `instance`, `debug_messenger`, `surface`,
+  `physical_device`, `device`, `graphics_family`, `graphics_queue`
+- Swap chain state: `swap_chain`, `swap_chain_images`,
+  `swap_chain_surface_format`, `swap_chain_extent`, `swap_chain_image_views`,
+  `framebuffer_resized`
+- Pipeline state: `shader_module`, `pipeline_layout`, `graphics_pipeline`
+- Command recording: `command_pool`, `command_buffers`
+- Per-frame sync: `present_complete_semaphores`, `render_finished_semaphores`,
+  `in_flight_fences`, `frame_index`
+
+Error handling is via error unions (`!void`) plus two shared helpers instead
+of hand-rolled `VkResult` checks:
+
+```zig
+// Single-call check: logs the error name + VkResult and returns err on failure.
+try vkCheck(vk.vkCreateInstance(&create_info, null, &self.instance), error.InstanceCreationFailed);
+
+// "Count then fill" enumeration (vkEnumerate*/vkGetPhysicalDevice*Properties style
+// functions): allocates and returns the filled slice; caller frees it.
+const physical_devices = try vkEnumerate(
+    self.allocator,
+    vk.VkPhysicalDevice,
+    vk.vkEnumeratePhysicalDevices,
+    .{self.instance},
+    error.EnumerationFailed,
+);
+defer self.allocator.free(physical_devices);
+```
+
+Both helpers live in the "Vulkan Helpers" section at the bottom of
+`main.zig`, alongside the other free functions (`debugCallback`,
+`checkRequiredFeatures`, `chooseSwapSurfaceFormat`, `chooseSwapPresentMode`,
+`chooseSwapMinImageCount`) and the small `FpsCounter` struct used to update
+the window title with FPS/frame-time twice per second. New free functions
+that don't need `self` go there too, not as `App` methods with an unused
+`self` parameter.
 
 Allocation pattern:
 
@@ -70,12 +103,16 @@ std.log.err("...", .{});
 
 Cleanup order in `cleanup()`:
 
-1. `vk.vkDestroyDevice(device, null)`
-2. `vk.vkDestroySurfaceKHR(instance, surface, null)`
-3. destroy debug messenger
-4. `vk.vkDestroyInstance(instance, null)`
-5. `sdl.SDL_DestroyWindow(window)`
-6. `sdl.SDL_Quit()`
+1. Destroy sync objects (semaphores, fences) and free command buffers
+2. `vk.vkDestroyCommandPool(device, command_pool, null)`
+3. Destroy graphics pipeline, pipeline layout, shader module
+4. Clean up the swap chain (image views, swapchain, image slice)
+5. `vk.vkDestroyDevice(device, null)`
+6. `vk.vkDestroySurfaceKHR(instance, surface, null)`
+7. Destroy debug messenger
+8. `vk.vkDestroyInstance(instance, null)`
+9. `sdl.SDL_DestroyWindow(window)`
+10. `sdl.SDL_Quit()`
 
 ## Build setup
 
@@ -91,5 +128,6 @@ Cleanup order in `cleanup()`:
   any `vulkan-zig`-style wrappers.
 - Do NOT use snake_case Vulkan struct field names (e.g., `.s_type`,
   `.image_format`). Use `.sType`, `.imageFormat`.
-- Do NOT invent new module names or new project layout. Extend
-  `HelloTriangleApplication`.
+- Do NOT invent new module names or new project layout. Extend `App`.
+- Do NOT hand-roll `if (result != vk.VK_SUCCESS) { ... }` blocks or manual
+  "count then fill" enumeration loops. Use `vkCheck` and `vkEnumerate`.
