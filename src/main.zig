@@ -134,42 +134,14 @@ const App = struct {
 
     fn mainLoop(self: *App) !void {
         var running = true;
-
-        var last_tick: u64 = sdl.SDL_GetTicks();
-        var fps_timer: u64 = last_tick;
-        var frame_count: u32 = 0;
+        var fps = FpsCounter.init();
 
         while (running) {
             running = self.pollEvents();
             if (!running) break;
 
             try self.drawFrame();
-
-            // FPS tracking
-            const now = sdl.SDL_GetTicks();
-            last_tick = now;
-            frame_count += 1;
-
-            // Update title twice per second
-            if (now - fps_timer >= 500) {
-                const elapsed_ms = now - fps_timer;
-                const fps = @as(f64, @floatFromInt(frame_count)) * 1000.0 /
-                    @as(f64, @floatFromInt(elapsed_ms));
-                const avg_frame_time = @as(f64, @floatFromInt(elapsed_ms)) /
-                    @as(f64, @floatFromInt(frame_count));
-
-                var title_buf: [128]u8 = undefined;
-                const title = std.fmt.bufPrintZ(
-                    &title_buf,
-                    "Koba - FPS: {d:.1} | Frame: {d:.2}ms",
-                    .{ fps, avg_frame_time },
-                ) catch "Koba";
-
-                _ = sdl.SDL_SetWindowTitle(self.window, title.ptr);
-
-                fps_timer = now;
-                frame_count = 0;
-            }
+            fps.tick(self.window);
         }
 
         if (self.device != null) {
@@ -467,7 +439,7 @@ const App = struct {
 
         const supports_all_extensions = try self.checkDeviceExtensionSupport(physical_device);
 
-        const supports_required_features = self.checkRequiredFeatures(physical_device);
+        const supports_required_features = checkRequiredFeatures(physical_device);
 
         // const is_discrete_gpu = properties.deviceType == vk.VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
         const has_geometry_shader = features.geometryShader == vk.VK_TRUE;
@@ -508,39 +480,6 @@ const App = struct {
         }
 
         return true;
-    }
-
-    fn checkRequiredFeatures(self: *App, physical_device: vk.VkPhysicalDevice) bool {
-        _ = self;
-
-        var extended_dynamic_state: vk.VkPhysicalDeviceExtendedDynamicStateFeaturesEXT = .{
-            .sType = vk.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_FEATURES_EXT,
-            .pNext = null,
-            .extendedDynamicState = vk.VK_FALSE,
-        };
-        var vulkan_1_3_features: vk.VkPhysicalDeviceVulkan13Features = .{
-            .sType = vk.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
-            .pNext = &extended_dynamic_state,
-            .dynamicRendering = vk.VK_FALSE,
-            .synchronization2 = vk.VK_FALSE,
-        };
-        var vulkan_1_1_features: vk.VkPhysicalDeviceVulkan11Features = .{
-            .sType = vk.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES,
-            .pNext = &vulkan_1_3_features,
-            .shaderDrawParameters = vk.VK_FALSE,
-        };
-        var features2: vk.VkPhysicalDeviceFeatures2 = .{
-            .sType = vk.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
-            .pNext = &vulkan_1_1_features,
-            .features = std.mem.zeroes(vk.VkPhysicalDeviceFeatures),
-        };
-
-        vk.vkGetPhysicalDeviceFeatures2(physical_device, &features2);
-
-        return vulkan_1_1_features.shaderDrawParameters == vk.VK_TRUE and
-            vulkan_1_3_features.dynamicRendering == vk.VK_TRUE and
-            vulkan_1_3_features.synchronization2 == vk.VK_TRUE and
-            extended_dynamic_state.extendedDynamicState == vk.VK_TRUE;
     }
 
     // +----------------------------+
@@ -2008,6 +1947,45 @@ pub fn main() !void {
     };
 }
 
+// +---------------+
+// |  FPS Counter  |
+// +---------------+
+
+const FpsCounter = struct {
+    timer: u64,
+    frame_count: u32 = 0,
+
+    fn init() FpsCounter {
+        return .{ .timer = sdl.SDL_GetTicks() };
+    }
+
+    // Updates the window title with FPS/frame-time twice per second.
+    fn tick(self: *FpsCounter, window: ?*sdl.SDL_Window) void {
+        self.frame_count += 1;
+
+        const now = sdl.SDL_GetTicks();
+        const elapsed_ms = now - self.timer;
+        if (elapsed_ms < 500) return;
+
+        const fps = @as(f64, @floatFromInt(self.frame_count)) * 1000.0 /
+            @as(f64, @floatFromInt(elapsed_ms));
+        const avg_frame_time = @as(f64, @floatFromInt(elapsed_ms)) /
+            @as(f64, @floatFromInt(self.frame_count));
+
+        var title_buf: [128]u8 = undefined;
+        const title = std.fmt.bufPrintZ(
+            &title_buf,
+            "Koba - FPS: {d:.1} | Frame: {d:.2}ms",
+            .{ fps, avg_frame_time },
+        ) catch "Koba";
+
+        _ = sdl.SDL_SetWindowTitle(window, title.ptr);
+
+        self.timer = now;
+        self.frame_count = 0;
+    }
+};
+
 // +----------------+
 // | Free Functions |
 // +----------------+
@@ -2027,6 +2005,37 @@ fn debugCallback(
     }
 
     return vk.VK_FALSE;
+}
+
+fn checkRequiredFeatures(physical_device: vk.VkPhysicalDevice) bool {
+    var extended_dynamic_state: vk.VkPhysicalDeviceExtendedDynamicStateFeaturesEXT = .{
+        .sType = vk.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_FEATURES_EXT,
+        .pNext = null,
+        .extendedDynamicState = vk.VK_FALSE,
+    };
+    var vulkan_1_3_features: vk.VkPhysicalDeviceVulkan13Features = .{
+        .sType = vk.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
+        .pNext = &extended_dynamic_state,
+        .dynamicRendering = vk.VK_FALSE,
+        .synchronization2 = vk.VK_FALSE,
+    };
+    var vulkan_1_1_features: vk.VkPhysicalDeviceVulkan11Features = .{
+        .sType = vk.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES,
+        .pNext = &vulkan_1_3_features,
+        .shaderDrawParameters = vk.VK_FALSE,
+    };
+    var features2: vk.VkPhysicalDeviceFeatures2 = .{
+        .sType = vk.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
+        .pNext = &vulkan_1_1_features,
+        .features = std.mem.zeroes(vk.VkPhysicalDeviceFeatures),
+    };
+
+    vk.vkGetPhysicalDeviceFeatures2(physical_device, &features2);
+
+    return vulkan_1_1_features.shaderDrawParameters == vk.VK_TRUE and
+        vulkan_1_3_features.dynamicRendering == vk.VK_TRUE and
+        vulkan_1_3_features.synchronization2 == vk.VK_TRUE and
+        extended_dynamic_state.extendedDynamicState == vk.VK_TRUE;
 }
 
 fn chooseSwapSurfaceFormat(available_formats: []const vk.VkSurfaceFormatKHR) vk.VkSurfaceFormatKHR {
@@ -2082,8 +2091,6 @@ fn chooseSwapMinImageCount(capabilities: vk.VkSurfaceCapabilitiesKHR) u32 {
 // |  Vulkan Helpers  |
 // +------------------+
 
-// Logs err's name (with the VkResult appended) and returns it when result
-// is anything other than VK_SUCCESS.
 fn vkCheck(result: vk.VkResult, err: anytype) @TypeOf(err)!void {
     if (result == vk.VK_SUCCESS) return;
 
@@ -2091,9 +2098,6 @@ fn vkCheck(result: vk.VkResult, err: anytype) @TypeOf(err)!void {
     return err;
 }
 
-// Runs the Vulkan "count then fill" enumeration pattern for func, which is
-// called as func(args..., &count, items.ptr) and may return either VkResult
-// or void. The caller owns the returned slice.
 fn vkEnumerate(
     allocator: std.mem.Allocator,
     comptime T: type,
