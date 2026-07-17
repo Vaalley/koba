@@ -10,7 +10,7 @@ const required_device_extensions = [_][*:0]const u8{
 };
 const max_frames_in_flight: usize = 2;
 
-const HelloTriangleApplication = struct {
+const App = struct {
     const WIDTH: u32 = 1280;
     const HEIGHT: u32 = 720;
 
@@ -43,7 +43,7 @@ const HelloTriangleApplication = struct {
     // |  Lifecycle  |
     // +-------------+
 
-    pub fn run(self: *HelloTriangleApplication) !void {
+    pub fn run(self: *App) !void {
         try self.initWindow();
         defer self.cleanup();
 
@@ -51,7 +51,7 @@ const HelloTriangleApplication = struct {
         try self.mainLoop();
     }
 
-    fn initWindow(self: *HelloTriangleApplication) !void {
+    fn initWindow(self: *App) !void {
         if (!sdl.SDL_Init(sdl.SDL_INIT_VIDEO)) {
             std.log.err("SDL Initialization Failed: {s}", .{sdl.SDL_GetError()});
             return error.SDLInitFailed;
@@ -68,7 +68,7 @@ const HelloTriangleApplication = struct {
         };
     }
 
-    fn initVulkan(self: *HelloTriangleApplication) !void {
+    fn initVulkan(self: *App) !void {
         std.log.debug("Creating instance...", .{});
         try self.createInstance();
 
@@ -111,7 +111,7 @@ const HelloTriangleApplication = struct {
         std.log.info("Vulkan initialization complete", .{});
     }
 
-    fn pollEvents(self: *HelloTriangleApplication) bool {
+    fn pollEvents(self: *App) bool {
         var event: sdl.SDL_Event = undefined;
         var running = true;
 
@@ -132,7 +132,7 @@ const HelloTriangleApplication = struct {
         return running;
     }
 
-    fn mainLoop(self: *HelloTriangleApplication) !void {
+    fn mainLoop(self: *App) !void {
         var running = true;
 
         var last_tick: u64 = sdl.SDL_GetTicks();
@@ -173,15 +173,11 @@ const HelloTriangleApplication = struct {
         }
 
         if (self.device != null) {
-            const result = vk.vkDeviceWaitIdle(self.device);
-            if (result != vk.VK_SUCCESS) {
-                std.log.err("Failed to wait for the device to become idle", .{});
-                return error.FailedToWaitForDeviceIdle;
-            }
+            try vkCheck(vk.vkDeviceWaitIdle(self.device), error.FailedToWaitForDeviceIdle);
         }
     }
 
-    fn cleanup(self: *HelloTriangleApplication) void {
+    fn cleanup(self: *App) void {
         std.log.debug("Cleaning up...", .{});
 
         self.destroySyncObjects();
@@ -230,7 +226,7 @@ const HelloTriangleApplication = struct {
     // |  Instance Setup  |
     // +------------------+
 
-    fn createInstance(self: *HelloTriangleApplication) !void {
+    fn createInstance(self: *App) !void {
         if (enable_validation_layers) {
             const supported = try checkValidationLayerSupport(self);
             if (!supported) {
@@ -271,35 +267,20 @@ const HelloTriangleApplication = struct {
             .ppEnabledLayerNames = required_layers.ptr,
         };
 
-        const result = vk.vkCreateInstance(&create_info, null, &self.instance);
-        if (result != vk.VK_SUCCESS) {
-            std.log.err("Failed to create Vulkan instance (VkResult = {d})", .{result});
-            return error.InstanceCreationFailed;
-        }
+        try vkCheck(vk.vkCreateInstance(&create_info, null, &self.instance), error.InstanceCreationFailed);
 
         std.log.info("Vulkan instance created (API version 1.4)", .{});
     }
 
-    fn checkValidationLayerSupport(self: *HelloTriangleApplication) !bool {
-        var layer_count: u32 = 0;
-        {
-            const result = vk.vkEnumerateInstanceLayerProperties(&layer_count, null);
-            if (result != vk.VK_SUCCESS) {
-                std.log.err("vkEnumerateInstanceLayerProperties (count) failed (VkResult = {d})", .{result});
-                return error.EnumerationFailed;
-            }
-        }
-
-        const available_layers = try self.allocator.alloc(vk.VkLayerProperties, layer_count);
+    fn checkValidationLayerSupport(self: *App) !bool {
+        const available_layers = try vkEnumerate(
+            self.allocator,
+            vk.VkLayerProperties,
+            vk.vkEnumerateInstanceLayerProperties,
+            .{},
+            error.EnumerationFailed,
+        );
         defer self.allocator.free(available_layers);
-
-        {
-            const result = vk.vkEnumerateInstanceLayerProperties(&layer_count, available_layers.ptr);
-            if (result != vk.VK_SUCCESS) {
-                std.log.err("vkEnumerateInstanceLayerProperties (fill) failed (VkResult = {d})", .{result});
-                return error.EnumerationFailed;
-            }
-        }
 
         for (validation_layers) |layer_name| {
             const required_name = std.mem.sliceTo(layer_name, 0);
@@ -314,26 +295,15 @@ const HelloTriangleApplication = struct {
         return true;
     }
 
-    fn checkExtensionSupport(self: *HelloTriangleApplication, required_extensions: []const [*c]const u8) !void {
-        var extension_count: u32 = 0;
-        {
-            const result = vk.vkEnumerateInstanceExtensionProperties(null, &extension_count, null);
-            if (result != vk.VK_SUCCESS) {
-                std.log.err("vkEnumerateInstanceExtensionProperties (count) failed (VkResult = {d})", .{result});
-                return error.EnumerationFailed;
-            }
-        }
-
-        const available_extensions = try self.allocator.alloc(vk.VkExtensionProperties, extension_count);
+    fn checkExtensionSupport(self: *App, required_extensions: []const [*c]const u8) !void {
+        const available_extensions = try vkEnumerate(
+            self.allocator,
+            vk.VkExtensionProperties,
+            vk.vkEnumerateInstanceExtensionProperties,
+            .{null},
+            error.EnumerationFailed,
+        );
         defer self.allocator.free(available_extensions);
-
-        {
-            const result = vk.vkEnumerateInstanceExtensionProperties(null, &extension_count, available_extensions.ptr);
-            if (result != vk.VK_SUCCESS) {
-                std.log.err("vkEnumerateInstanceExtensionProperties (fill) failed (VkResult = {d})", .{result});
-                return error.EnumerationFailed;
-            }
-        }
 
         std.log.debug("Available extensions:", .{});
         for (available_extensions) |extension| {
@@ -355,7 +325,7 @@ const HelloTriangleApplication = struct {
         }
     }
 
-    fn getRequiredExtensions(self: *HelloTriangleApplication) ![][*c]const u8 {
+    fn getRequiredExtensions(self: *App) ![][*c]const u8 {
         var sdl_extension_count: u32 = 0;
         const sdl_extensions = sdl.SDL_Vulkan_GetInstanceExtensions(&sdl_extension_count) orelse {
             std.log.err("Failed to query SDL Vulkan extensions: {s}", .{sdl.SDL_GetError()});
@@ -378,7 +348,7 @@ const HelloTriangleApplication = struct {
     // |  Debug Messenger  |
     // +-------------------+
 
-    fn setupDebugMessenger(self: *HelloTriangleApplication) !void {
+    fn setupDebugMessenger(self: *App) !void {
         if (!enable_validation_layers) return;
 
         const create_info = vk.VkDebugUtilsMessengerCreateInfoEXT{
@@ -400,16 +370,15 @@ const HelloTriangleApplication = struct {
             return error.ExtensionNotPresent;
         };
 
-        const result = func(self.instance, &create_info, null, &self.debug_messenger);
-        if (result != vk.VK_SUCCESS) {
-            std.log.err("Failed to set up debug messenger (VkResult = {d})", .{result});
-            return error.DebugMessengerCreationFailed;
-        }
+        try vkCheck(
+            func(self.instance, &create_info, null, &self.debug_messenger),
+            error.DebugMessengerCreationFailed,
+        );
 
         std.log.debug("Debug messenger set up", .{});
     }
 
-    fn destroyDebugMessenger(self: *HelloTriangleApplication) void {
+    fn destroyDebugMessenger(self: *App) void {
         if (self.debug_messenger == null) return;
 
         const destroy_fn: vk.PFN_vkDestroyDebugUtilsMessengerEXT = @ptrCast(
@@ -425,7 +394,7 @@ const HelloTriangleApplication = struct {
     // |  Window Surface  |
     // +------------------+
 
-    fn createSurface(self: *HelloTriangleApplication) !void {
+    fn createSurface(self: *App) !void {
         if (!sdl.SDL_Vulkan_CreateSurface(
             self.window,
             @ptrCast(self.instance),
@@ -443,32 +412,21 @@ const HelloTriangleApplication = struct {
     // |  Physical Device Selection  |
     // +-----------------------------+
 
-    fn pickPhysicalDevice(self: *HelloTriangleApplication) !void {
-        var device_count: u32 = 0;
-        {
-            const result = vk.vkEnumeratePhysicalDevices(self.instance, &device_count, null);
-            if (result != vk.VK_SUCCESS) {
-                std.log.err("vkEnumeratePhysicalDevices (count) failed (VkResult = {d})", .{result});
-                return error.EnumerationFailed;
-            }
-        }
+    fn pickPhysicalDevice(self: *App) !void {
+        const physical_devices = try vkEnumerate(
+            self.allocator,
+            vk.VkPhysicalDevice,
+            vk.vkEnumeratePhysicalDevices,
+            .{self.instance},
+            error.EnumerationFailed,
+        );
+        defer self.allocator.free(physical_devices);
 
-        if (device_count == 0) {
+        if (physical_devices.len == 0) {
             return error.NoGpuWithVulkanSupport;
         }
 
-        std.log.debug("Found {d} Vulkan-capable GPU(s)", .{device_count});
-
-        const physical_devices = try self.allocator.alloc(vk.VkPhysicalDevice, device_count);
-        defer self.allocator.free(physical_devices);
-
-        {
-            const result = vk.vkEnumeratePhysicalDevices(self.instance, &device_count, physical_devices.ptr);
-            if (result != vk.VK_SUCCESS) {
-                std.log.err("vkEnumeratePhysicalDevices (fill) failed (VkResult = {d})", .{result});
-                return error.EnumerationFailed;
-            }
-        }
+        std.log.debug("Found {d} Vulkan-capable GPU(s)", .{physical_devices.len});
 
         for (physical_devices) |candidate| {
             if (try self.isDeviceSuitable(candidate)) {
@@ -484,7 +442,7 @@ const HelloTriangleApplication = struct {
         std.log.info("selected physical device: {s}", .{std.mem.sliceTo(&properties.deviceName, 0)});
     }
 
-    fn isDeviceSuitable(self: *HelloTriangleApplication, physical_device: vk.VkPhysicalDevice) !bool {
+    fn isDeviceSuitable(self: *App, physical_device: vk.VkPhysicalDevice) !bool {
         var properties: vk.VkPhysicalDeviceProperties = undefined;
         vk.vkGetPhysicalDeviceProperties(physical_device, &properties);
         var features: vk.VkPhysicalDeviceFeatures = undefined;
@@ -494,12 +452,14 @@ const HelloTriangleApplication = struct {
 
         const supports_vulkan_1_3 = properties.apiVersion >= vk.VK_API_VERSION_1_3;
 
-        var family_count: u32 = 0;
-        vk.vkGetPhysicalDeviceQueueFamilyProperties(physical_device, &family_count, null);
-
-        const families = try self.allocator.alloc(vk.VkQueueFamilyProperties, family_count);
+        const families = try vkEnumerate(
+            self.allocator,
+            vk.VkQueueFamilyProperties,
+            vk.vkGetPhysicalDeviceQueueFamilyProperties,
+            .{physical_device},
+            error.EnumerationFailed,
+        );
         defer self.allocator.free(families);
-        vk.vkGetPhysicalDeviceQueueFamilyProperties(physical_device, &family_count, families.ptr);
 
         const supports_graphics = for (families) |family| {
             if ((family.queueFlags & vk.VK_QUEUE_GRAPHICS_BIT) != 0) break true;
@@ -526,25 +486,15 @@ const HelloTriangleApplication = struct {
         return suitable;
     }
 
-    fn checkDeviceExtensionSupport(self: *HelloTriangleApplication, physical_device: vk.VkPhysicalDevice) !bool {
-        var extension_count: u32 = 0;
-        {
-            const result = vk.vkEnumerateDeviceExtensionProperties(physical_device, null, &extension_count, null);
-            if (result != vk.VK_SUCCESS) {
-                std.log.err("vkEnumerateDeviceExtensionProperties (count) failed (VkResult = {d})", .{result});
-                return error.EnumerationFailed;
-            }
-        }
-
-        const available = try self.allocator.alloc(vk.VkExtensionProperties, extension_count);
+    fn checkDeviceExtensionSupport(self: *App, physical_device: vk.VkPhysicalDevice) !bool {
+        const available = try vkEnumerate(
+            self.allocator,
+            vk.VkExtensionProperties,
+            vk.vkEnumerateDeviceExtensionProperties,
+            .{ physical_device, null },
+            error.EnumerationFailed,
+        );
         defer self.allocator.free(available);
-        {
-            const result = vk.vkEnumerateDeviceExtensionProperties(physical_device, null, &extension_count, available.ptr);
-            if (result != vk.VK_SUCCESS) {
-                std.log.err("vkEnumerateDeviceExtensionProperties (fill) failed (VkResult = {d})", .{result});
-                return error.EnumerationFailed;
-            }
-        }
 
         for (required_device_extensions) |required| {
             const required_name = std.mem.sliceTo(required, 0);
@@ -560,7 +510,7 @@ const HelloTriangleApplication = struct {
         return true;
     }
 
-    fn checkRequiredFeatures(self: *HelloTriangleApplication, physical_device: vk.VkPhysicalDevice) bool {
+    fn checkRequiredFeatures(self: *App, physical_device: vk.VkPhysicalDevice) bool {
         _ = self;
 
         var extended_dynamic_state: vk.VkPhysicalDeviceExtendedDynamicStateFeaturesEXT = .{
@@ -597,31 +547,30 @@ const HelloTriangleApplication = struct {
     // |  Logical Device Selection  |
     // +----------------------------+
 
-    fn createLogicalDevice(self: *HelloTriangleApplication) !void {
-        var family_count: u32 = 0;
-        vk.vkGetPhysicalDeviceQueueFamilyProperties(self.physical_device, &family_count, null);
-
-        const families = try self.allocator.alloc(vk.VkQueueFamilyProperties, family_count);
+    fn createLogicalDevice(self: *App) !void {
+        const families = try vkEnumerate(
+            self.allocator,
+            vk.VkQueueFamilyProperties,
+            vk.vkGetPhysicalDeviceQueueFamilyProperties,
+            .{self.physical_device},
+            error.EnumerationFailed,
+        );
         defer self.allocator.free(families);
-        vk.vkGetPhysicalDeviceQueueFamilyProperties(self.physical_device, &family_count, families.ptr);
-        std.log.debug("Device has {d} queue family(ies)", .{family_count});
+        std.log.debug("Device has {d} queue family(ies)", .{families.len});
 
         self.graphics_family = for (families, 0..) |family, i| {
             if ((family.queueFlags & vk.VK_QUEUE_GRAPHICS_BIT) == 0) continue;
 
             var supports_present: vk.VkBool32 = vk.VK_FALSE;
-            {
-                const result = vk.vkGetPhysicalDeviceSurfaceSupportKHR(
+            try vkCheck(
+                vk.vkGetPhysicalDeviceSurfaceSupportKHR(
                     self.physical_device,
                     @intCast(i),
                     self.surface,
                     &supports_present,
-                );
-                if (result != vk.VK_SUCCESS) {
-                    std.log.err("vkGetPhysicalDeviceSurfaceSupportKHR failed (VkResult = {d})", .{result});
-                    return error.SurfaceSupportQueryFailed;
-                }
-            }
+                ),
+                error.SurfaceSupportQueryFailed,
+            );
 
             if (supports_present == vk.VK_TRUE) break @intCast(i);
         } else return error.NoGraphicsPresentQueueFamily;
@@ -673,13 +622,10 @@ const HelloTriangleApplication = struct {
             .pEnabledFeatures = null,
         };
 
-        {
-            const result = vk.vkCreateDevice(self.physical_device, &device_create_info, null, &self.device);
-            if (result != vk.VK_SUCCESS) {
-                std.log.err("vkCreateDevice failed (VkResult = {d})", .{result});
-                return error.DeviceCreationFailed;
-            }
-        }
+        try vkCheck(
+            vk.vkCreateDevice(self.physical_device, &device_create_info, null, &self.device),
+            error.DeviceCreationFailed,
+        );
 
         vk.vkGetDeviceQueue(self.device, self.graphics_family, 0, &self.graphics_queue);
         std.log.info("Logical device created successfully", .{});
@@ -689,94 +635,56 @@ const HelloTriangleApplication = struct {
     // |  Swap Chain  |
     // +--------------+
 
-    fn querySurfaceCapabilities(self: *HelloTriangleApplication) !vk.VkSurfaceCapabilitiesKHR {
+    fn querySurfaceCapabilities(self: *App) !vk.VkSurfaceCapabilitiesKHR {
         var capabilities: vk.VkSurfaceCapabilitiesKHR = undefined;
 
-        const result = vk.vkGetPhysicalDeviceSurfaceCapabilitiesKHR(
-            self.physical_device,
-            self.surface,
-            &capabilities,
+        try vkCheck(
+            vk.vkGetPhysicalDeviceSurfaceCapabilitiesKHR(
+                self.physical_device,
+                self.surface,
+                &capabilities,
+            ),
+            error.FailedToQuerySurfaceCapabilities,
         );
-        if (result != vk.VK_SUCCESS) {
-            return error.FailedToQuerySurfaceCapabilities;
-        }
 
         return capabilities;
     }
 
-    fn querySurfaceFormats(self: *HelloTriangleApplication) ![]vk.VkSurfaceFormatKHR {
-        var format_count: u32 = 0;
-
-        var result = vk.vkGetPhysicalDeviceSurfaceFormatsKHR(
-            self.physical_device,
-            self.surface,
-            &format_count,
-            null,
-        );
-        if (result != vk.VK_SUCCESS) {
-            return error.FailedToQuerySurfaceFormats;
-        }
-
-        if (format_count == 0) {
-            return error.NoSurfaceFormats;
-        }
-
-        const formats = try self.allocator.alloc(
+    fn querySurfaceFormats(self: *App) ![]vk.VkSurfaceFormatKHR {
+        const formats = try vkEnumerate(
+            self.allocator,
             vk.VkSurfaceFormatKHR,
-            format_count,
+            vk.vkGetPhysicalDeviceSurfaceFormatsKHR,
+            .{ self.physical_device, self.surface },
+            error.FailedToQuerySurfaceFormats,
         );
         errdefer self.allocator.free(formats);
 
-        result = vk.vkGetPhysicalDeviceSurfaceFormatsKHR(
-            self.physical_device,
-            self.surface,
-            &format_count,
-            formats.ptr,
-        );
-        if (result != vk.VK_SUCCESS) {
-            return error.FailedToQuerySurfaceFormats;
+        if (formats.len == 0) {
+            return error.NoSurfaceFormats;
         }
 
         return formats;
     }
 
-    fn queryPresentModes(self: *HelloTriangleApplication) ![]vk.VkPresentModeKHR {
-        var mode_count: u32 = 0;
-
-        var result = vk.vkGetPhysicalDeviceSurfacePresentModesKHR(
-            self.physical_device,
-            self.surface,
-            &mode_count,
-            null,
-        );
-        if (result != vk.VK_SUCCESS) {
-            return error.FailedToQueryPresentModes;
-        }
-
-        if (mode_count == 0) {
-            return error.NoPresentModes;
-        }
-
-        const modes = try self.allocator.alloc(
+    fn queryPresentModes(self: *App) ![]vk.VkPresentModeKHR {
+        const modes = try vkEnumerate(
+            self.allocator,
             vk.VkPresentModeKHR,
-            mode_count,
+            vk.vkGetPhysicalDeviceSurfacePresentModesKHR,
+            .{ self.physical_device, self.surface },
+            error.FailedToQueryPresentModes,
         );
         errdefer self.allocator.free(modes);
 
-        result = vk.vkGetPhysicalDeviceSurfacePresentModesKHR(
-            self.physical_device,
-            self.surface,
-            &mode_count,
-            modes.ptr,
-        );
-        if (result != vk.VK_SUCCESS) {
-            return error.FailedToQueryPresentModes;
+        if (modes.len == 0) {
+            return error.NoPresentModes;
         }
 
         return modes;
     }
 
-    fn chooseSwapExtent(self: *HelloTriangleApplication, capabilities: vk.VkSurfaceCapabilitiesKHR) !vk.VkExtent2D {
+    fn chooseSwapExtent(self: *App, capabilities: vk.VkSurfaceCapabilitiesKHR) !vk.VkExtent2D {
         if (capabilities.currentExtent.width != std.math.maxInt(u32)) {
             return capabilities.currentExtent;
         }
@@ -814,7 +722,7 @@ const HelloTriangleApplication = struct {
         };
     }
 
-    fn createSwapChain(self: *HelloTriangleApplication) !void {
+    fn createSwapChain(self: *App) !void {
         const capabilities = try self.querySurfaceCapabilities();
 
         const formats = try self.querySurfaceFormats();
@@ -851,40 +759,19 @@ const HelloTriangleApplication = struct {
             .oldSwapchain = null,
         };
 
-        var result = vk.vkCreateSwapchainKHR(
-            self.device,
-            &create_info,
-            null,
-            &self.swap_chain,
-        );
-        if (result != vk.VK_SUCCESS) {
-            return error.FailedToCreateSwapchain;
-        }
+        try vkCheck(vk.vkCreateSwapchainKHR(self.device, &create_info, null, &self.swap_chain), error.FailedToCreateSwapchain);
 
         errdefer {
             vk.vkDestroySwapchainKHR(self.device, self.swap_chain, null);
             self.swap_chain = null;
         }
 
-        var actual_image_count: u32 = 0;
-
-        result = vk.vkGetSwapchainImagesKHR(
-            self.device,
-            self.swap_chain,
-            &actual_image_count,
-            null,
-        );
-        if (result != vk.VK_SUCCESS) {
-            return error.FailedToGetSwapchainImages;
-        }
-
-        if (actual_image_count == 0) {
-            return error.NoSwapchainImages;
-        }
-
-        self.swap_chain_images = try self.allocator.alloc(
+        self.swap_chain_images = try vkEnumerate(
+            self.allocator,
             vk.VkImage,
-            actual_image_count,
+            vk.vkGetSwapchainImagesKHR,
+            .{ self.device, self.swap_chain },
+            error.FailedToGetSwapchainImages,
         );
 
         errdefer {
@@ -892,14 +779,8 @@ const HelloTriangleApplication = struct {
             self.swap_chain_images = &.{};
         }
 
-        result = vk.vkGetSwapchainImagesKHR(
-            self.device,
-            self.swap_chain,
-            &actual_image_count,
-            self.swap_chain_images.ptr,
-        );
-        if (result != vk.VK_SUCCESS) {
-            return error.FailedToGetSwapchainImages;
+        if (self.swap_chain_images.len == 0) {
+            return error.NoSwapchainImages;
         }
 
         std.log.info(
@@ -912,7 +793,7 @@ const HelloTriangleApplication = struct {
         );
     }
 
-    fn createImageViews(self: *HelloTriangleApplication) !void {
+    fn createImageViews(self: *App) !void {
         if (self.swap_chain_images.len == 0) {
             return error.NoSwapChainImages;
         }
@@ -961,19 +842,10 @@ const HelloTriangleApplication = struct {
         for (self.swap_chain_images, 0..) |image, index| {
             image_view_create_info.image = image;
 
-            const result = vk.vkCreateImageView(
-                self.device,
-                &image_view_create_info,
-                null,
-                &image_views[index],
+            try vkCheck(
+                vk.vkCreateImageView(self.device, &image_view_create_info, null, &image_views[index]),
+                error.FailedToCreateImageView,
             );
-
-            if (result != vk.VK_SUCCESS) {
-                std.log.err("Failed to create image view for swap-chain image {d}", .{
-                    index,
-                });
-                return error.FailedToCreateImageView;
-            }
 
             created_count += 1;
         }
@@ -985,7 +857,7 @@ const HelloTriangleApplication = struct {
         });
     }
 
-    fn destroyImageViews(self: *HelloTriangleApplication) void {
+    fn destroyImageViews(self: *App) void {
         for (self.swap_chain_image_views) |image_view| {
             vk.vkDestroyImageView(self.device, image_view, null);
         }
@@ -997,7 +869,7 @@ const HelloTriangleApplication = struct {
         self.swap_chain_image_views = &.{};
     }
 
-    fn cleanupSwapChain(self: *HelloTriangleApplication) void {
+    fn cleanupSwapChain(self: *App) void {
         if (self.device != null) {
             for (self.swap_chain_image_views) |image_view| {
                 if (image_view != null) {
@@ -1030,7 +902,7 @@ const HelloTriangleApplication = struct {
         }
     }
 
-    fn waitForDrawableSize(self: *HelloTriangleApplication) !void {
+    fn waitForDrawableSize(self: *App) !void {
         const window = self.window orelse return error.WindowNotCreated;
 
         while (true) {
@@ -1064,21 +936,14 @@ const HelloTriangleApplication = struct {
         }
     }
 
-    fn recreateSwapChain(self: *HelloTriangleApplication) !void {
+    fn recreateSwapChain(self: *App) !void {
         if (self.device == null) {
             return error.DeviceNotCreated;
         }
 
         try self.waitForDrawableSize();
 
-        const wait_result = vk.vkDeviceWaitIdle(self.device);
-        if (wait_result != vk.VK_SUCCESS) {
-            std.log.err(
-                "Failed to wait for the device before swap-chain recreation",
-                .{},
-            );
-            return error.FailedToWaitForDeviceIdle;
-        }
+        try vkCheck(vk.vkDeviceWaitIdle(self.device), error.FailedToWaitForDeviceIdle);
 
         self.cleanupSwapChain();
 
@@ -1090,7 +955,7 @@ const HelloTriangleApplication = struct {
         self.framebuffer_resized = false;
     }
 
-    fn acquireSwapChainImage(self: *HelloTriangleApplication, present_complete_semaphore: vk.VkSemaphore) !?u32 {
+    fn acquireSwapChainImage(self: *App, present_complete_semaphore: vk.VkSemaphore) !?u32 {
         if (self.device == null) {
             return error.DeviceNotCreated;
         }
@@ -1131,7 +996,7 @@ const HelloTriangleApplication = struct {
     }
 
     fn presentSwapChainImage(
-        self: *HelloTriangleApplication,
+        self: *App,
         render_finished_semaphore: vk.VkSemaphore,
         image_index: u32,
     ) !void {
@@ -1180,7 +1045,7 @@ const HelloTriangleApplication = struct {
     // |  Graphics Pipeline  |
     // +---------------------+
 
-    fn createPipelineLayout(self: *HelloTriangleApplication) !void {
+    fn createPipelineLayout(self: *App) !void {
         if (self.device == null) {
             return error.DeviceNotCreated;
         }
@@ -1199,22 +1064,12 @@ const HelloTriangleApplication = struct {
             .pPushConstantRanges = null,
         };
 
-        const result = vk.vkCreatePipelineLayout(
-            self.device,
-            &create_info,
-            null,
-            &self.pipeline_layout,
-        );
-
-        if (result != vk.VK_SUCCESS) {
-            std.log.err("Failed to create Vulkan pipeline layout", .{});
-            return error.FailedToCreatePipelineLayout;
-        }
+        try vkCheck(vk.vkCreatePipelineLayout(self.device, &create_info, null, &self.pipeline_layout), error.FailedToCreatePipelineLayout);
 
         std.log.debug("Created Vulkan pipeline layout", .{});
     }
 
-    fn createGraphicsPipeline(self: *HelloTriangleApplication) !void {
+    fn createGraphicsPipeline(self: *App) !void {
         if (self.device == null) {
             return error.DeviceNotCreated;
         }
@@ -1397,24 +1252,22 @@ const HelloTriangleApplication = struct {
             .basePipelineIndex = -1,
         };
 
-        const result = vk.vkCreateGraphicsPipelines(
-            self.device,
-            null,
-            1,
-            &pipeline_create_info,
-            null,
-            &self.graphics_pipeline,
+        try vkCheck(
+            vk.vkCreateGraphicsPipelines(
+                self.device,
+                null,
+                1,
+                &pipeline_create_info,
+                null,
+                &self.graphics_pipeline,
+            ),
+            error.FailedToCreateGraphicsPipeline,
         );
-
-        if (result != vk.VK_SUCCESS) {
-            std.log.err("Failed to create Vulkan graphics pipeline", .{});
-            return error.FailedToCreateGraphicsPipeline;
-        }
 
         std.log.info("Created Vulkan graphics pipeline", .{});
     }
 
-    fn destroyGraphicsPipeline(self: *HelloTriangleApplication) void {
+    fn destroyGraphicsPipeline(self: *App) void {
         if (self.graphics_pipeline != null) {
             vk.vkDestroyPipeline(
                 self.device,
@@ -1425,7 +1278,7 @@ const HelloTriangleApplication = struct {
         }
     }
 
-    fn destroyPipelineLayout(self: *HelloTriangleApplication) void {
+    fn destroyPipelineLayout(self: *App) void {
         if (self.pipeline_layout != null) {
             vk.vkDestroyPipelineLayout(
                 self.device,
@@ -1441,7 +1294,7 @@ const HelloTriangleApplication = struct {
     // +-----------------+
 
     fn readShaderCode(
-        self: *HelloTriangleApplication,
+        self: *App,
         path: []const u8,
     ) ![]u32 {
         const io = std.Io.Threaded.global_single_threaded.io();
@@ -1475,7 +1328,7 @@ const HelloTriangleApplication = struct {
         return words;
     }
 
-    fn createShaderModule(self: *HelloTriangleApplication, code: []const u32) !vk.VkShaderModule {
+    fn createShaderModule(self: *App, code: []const u32) !vk.VkShaderModule {
         if (code.len == 0) {
             return error.EmptyShaderCode;
         }
@@ -1490,22 +1343,12 @@ const HelloTriangleApplication = struct {
 
         var shader_module: vk.VkShaderModule = null;
 
-        const result = vk.vkCreateShaderModule(
-            self.device,
-            &create_info,
-            null,
-            &shader_module,
-        );
-
-        if (result != vk.VK_SUCCESS) {
-            std.log.err("Failed to create Vulkan shader module", .{});
-            return error.FailedToCreateShaderModule;
-        }
+        try vkCheck(vk.vkCreateShaderModule(self.device, &create_info, null, &shader_module), error.FailedToCreateShaderModule);
 
         return shader_module;
     }
 
-    fn createShaderModules(self: *HelloTriangleApplication) !void {
+    fn createShaderModules(self: *App) !void {
         const shader_code = try self.readShaderCode("shaders/slang.spv");
         defer self.allocator.free(shader_code);
 
@@ -1514,7 +1357,7 @@ const HelloTriangleApplication = struct {
         std.log.debug("Created Vulkan shader module", .{});
     }
 
-    fn makeVertexShaderStage(self: *HelloTriangleApplication) !vk.VkPipelineShaderStageCreateInfo {
+    fn makeVertexShaderStage(self: *App) !vk.VkPipelineShaderStageCreateInfo {
         if (self.shader_module == null) {
             return error.ShaderModuleNotCreated;
         }
@@ -1530,7 +1373,7 @@ const HelloTriangleApplication = struct {
         };
     }
 
-    fn makeFragmentShaderStage(self: *HelloTriangleApplication) !vk.VkPipelineShaderStageCreateInfo {
+    fn makeFragmentShaderStage(self: *App) !vk.VkPipelineShaderStageCreateInfo {
         if (self.shader_module == null) {
             return error.ShaderModuleNotCreated;
         }
@@ -1546,14 +1389,14 @@ const HelloTriangleApplication = struct {
         };
     }
 
-    fn createShaderStages(self: *HelloTriangleApplication) ![2]vk.VkPipelineShaderStageCreateInfo {
+    fn createShaderStages(self: *App) ![2]vk.VkPipelineShaderStageCreateInfo {
         return .{
             try self.makeVertexShaderStage(),
             try self.makeFragmentShaderStage(),
         };
     }
 
-    fn destroyShaderModule(self: *HelloTriangleApplication) void {
+    fn destroyShaderModule(self: *App) void {
         if (self.shader_module != null) {
             vk.vkDestroyShaderModule(
                 self.device,
@@ -1568,7 +1411,7 @@ const HelloTriangleApplication = struct {
     // |  Command Buffer  |
     // +------------------+
 
-    fn createCommandPool(self: *HelloTriangleApplication) !void {
+    fn createCommandPool(self: *App) !void {
         if (self.device == null) {
             return error.DeviceNotCreated;
         }
@@ -1584,22 +1427,12 @@ const HelloTriangleApplication = struct {
             .queueFamilyIndex = self.graphics_family,
         };
 
-        const result = vk.vkCreateCommandPool(
-            self.device,
-            &pool_info,
-            null,
-            &self.command_pool,
-        );
-
-        if (result != vk.VK_SUCCESS) {
-            std.log.err("Failed to create command pool", .{});
-            return error.FailedToCreateCommandPool;
-        }
+        try vkCheck(vk.vkCreateCommandPool(self.device, &pool_info, null, &self.command_pool), error.FailedToCreateCommandPool);
 
         std.log.debug("Created Vulkan command pool", .{});
     }
 
-    fn createCommandBuffers(self: *HelloTriangleApplication) !void {
+    fn createCommandBuffers(self: *App) !void {
         if (self.device == null) {
             return error.DeviceNotCreated;
         }
@@ -1629,16 +1462,7 @@ const HelloTriangleApplication = struct {
             .commandBufferCount = @intCast(max_frames_in_flight),
         };
 
-        const result = vk.vkAllocateCommandBuffers(
-            self.device,
-            &alloc_info,
-            self.command_buffers.ptr,
-        );
-
-        if (result != vk.VK_SUCCESS) {
-            std.log.err("Failed to allocate command buffers", .{});
-            return error.FailedToAllocateCommandBuffers;
-        }
+        try vkCheck(vk.vkAllocateCommandBuffers(self.device, &alloc_info, self.command_buffers.ptr), error.FailedToAllocateCommandBuffers);
 
         std.log.debug(
             "Allocated {d} command buffers for frames in flight",
@@ -1647,7 +1471,7 @@ const HelloTriangleApplication = struct {
     }
 
     fn transitionImageLayout(
-        self: *HelloTriangleApplication,
+        self: *App,
         command_buffer: vk.VkCommandBuffer,
         image_index: u32,
         old_layout: vk.VkImageLayout,
@@ -1703,7 +1527,7 @@ const HelloTriangleApplication = struct {
     }
 
     fn recordCommandBuffer(
-        self: *HelloTriangleApplication,
+        self: *App,
         command_buffer: vk.VkCommandBuffer,
         image_index: usize,
     ) !void {
@@ -1726,15 +1550,7 @@ const HelloTriangleApplication = struct {
             .pInheritanceInfo = null,
         };
 
-        var result = vk.vkBeginCommandBuffer(
-            command_buffer,
-            &begin_info,
-        );
-
-        if (result != vk.VK_SUCCESS) {
-            std.log.err("Failed to begin command-buffer recording", .{});
-            return error.FailedToBeginCommandBuffer;
-        }
+        try vkCheck(vk.vkBeginCommandBuffer(command_buffer, &begin_info), error.FailedToBeginCommandBuffer);
 
         errdefer {
             _ = vk.vkEndCommandBuffer(command_buffer);
@@ -1852,19 +1668,15 @@ const HelloTriangleApplication = struct {
             vk.VK_PIPELINE_STAGE_2_BOTTOM_OF_PIPE_BIT,
         );
 
-        result = vk.vkEndCommandBuffer(command_buffer);
+        try vkCheck(vk.vkEndCommandBuffer(command_buffer), error.FailedToEndCommandBuffer);
 
-        if (result != vk.VK_SUCCESS) {
-            std.log.err("Failed to finish command-buffer recording", .{});
-            return error.FailedToEndCommandBuffer;
-        }
-
-        std.log.debug("Recorded command buffer for swap-chain image {d}", .{
-            image_index,
-        });
+        // Uncomment if you want to see this debug message (very spammy)
+        // std.log.debug("Recorded command buffer for swap-chain image {d}", .{
+        //     image_index,
+        // });
     }
 
-    fn destroyCommandBuffers(self: *HelloTriangleApplication) void {
+    fn destroyCommandBuffers(self: *App) void {
         if (self.device != null and
             self.command_pool != null and
             self.command_buffers.len != 0)
@@ -1887,7 +1699,7 @@ const HelloTriangleApplication = struct {
     // |  Synchronization  |
     // +-------------------+
 
-    fn createSyncObjects(self: *HelloTriangleApplication) !void {
+    fn createSyncObjects(self: *App) !void {
         if (self.device == null) {
             return error.DeviceNotCreated;
         }
@@ -1979,54 +1791,39 @@ const HelloTriangleApplication = struct {
         }
 
         while (created_present_complete < max_frames_in_flight) : (created_present_complete += 1) {
-            const result = vk.vkCreateSemaphore(
-                self.device,
-                &semaphore_info,
-                null,
-                &self.present_complete_semaphores[created_present_complete],
+            try vkCheck(
+                vk.vkCreateSemaphore(
+                    self.device,
+                    &semaphore_info,
+                    null,
+                    &self.present_complete_semaphores[created_present_complete],
+                ),
+                error.FailedToCreateAcquireSemaphore,
             );
-
-            if (result != vk.VK_SUCCESS) {
-                std.log.err(
-                    "Failed to create acquire semaphore for frame {d}",
-                    .{created_present_complete},
-                );
-                return error.FailedToCreateAcquireSemaphore;
-            }
         }
 
         while (created_render_finished < self.swap_chain_images.len) : (created_render_finished += 1) {
-            const result = vk.vkCreateSemaphore(
-                self.device,
-                &semaphore_info,
-                null,
-                &self.render_finished_semaphores[created_render_finished],
+            try vkCheck(
+                vk.vkCreateSemaphore(
+                    self.device,
+                    &semaphore_info,
+                    null,
+                    &self.render_finished_semaphores[created_render_finished],
+                ),
+                error.FailedToCreateRenderFinishedSemaphore,
             );
-
-            if (result != vk.VK_SUCCESS) {
-                std.log.err(
-                    "Failed to create render-finished semaphore for image {d}",
-                    .{created_render_finished},
-                );
-                return error.FailedToCreateRenderFinishedSemaphore;
-            }
         }
 
         while (created_fences < max_frames_in_flight) : (created_fences += 1) {
-            const result = vk.vkCreateFence(
-                self.device,
-                &fence_info,
-                null,
-                &self.in_flight_fences[created_fences],
+            try vkCheck(
+                vk.vkCreateFence(
+                    self.device,
+                    &fence_info,
+                    null,
+                    &self.in_flight_fences[created_fences],
+                ),
+                error.FailedToCreateInFlightFence,
             );
-
-            if (result != vk.VK_SUCCESS) {
-                std.log.err(
-                    "Failed to create fence for frame {d}",
-                    .{created_fences},
-                );
-                return error.FailedToCreateInFlightFence;
-            }
         }
 
         std.log.debug(
@@ -2038,7 +1835,7 @@ const HelloTriangleApplication = struct {
         );
     }
 
-    fn drawFrame(self: *HelloTriangleApplication) !void {
+    fn drawFrame(self: *App) !void {
         if (self.device == null) {
             return error.DeviceNotCreated;
         }
@@ -2070,21 +1867,16 @@ const HelloTriangleApplication = struct {
         const frame_index = self.frame_index;
 
         // 1. Wait for this frame slot's fence (previous use of this slot is done)
-        var result = vk.vkWaitForFences(
-            self.device,
-            1,
-            &self.in_flight_fences[frame_index],
-            vk.VK_TRUE,
-            std.math.maxInt(u64),
+        try vkCheck(
+            vk.vkWaitForFences(
+                self.device,
+                1,
+                &self.in_flight_fences[frame_index],
+                vk.VK_TRUE,
+                std.math.maxInt(u64),
+            ),
+            error.FailedToWaitForInFlightFence,
         );
-
-        if (result != vk.VK_SUCCESS) {
-            std.log.err(
-                "Failed to wait for fence for frame {d}",
-                .{frame_index},
-            );
-            return error.FailedToWaitForInFlightFence;
-        }
 
         // 2. Acquire the next swap-chain image (may trigger recreation)
         const image_index = (try self.acquireSwapChainImage(
@@ -2102,33 +1894,10 @@ const HelloTriangleApplication = struct {
         }
 
         // 3. Reset the fence (AFTER successful acquisition, before submission)
-        result = vk.vkResetFences(
-            self.device,
-            1,
-            &self.in_flight_fences[frame_index],
-        );
-
-        if (result != vk.VK_SUCCESS) {
-            std.log.err(
-                "Failed to reset fence for frame {d}",
-                .{frame_index},
-            );
-            return error.FailedToResetInFlightFence;
-        }
+        try vkCheck(vk.vkResetFences(self.device, 1, &self.in_flight_fences[frame_index]), error.FailedToResetInFlightFence);
 
         // 4. Reset and record the command buffer for this frame slot
-        result = vk.vkResetCommandBuffer(
-            self.command_buffers[frame_index],
-            0,
-        );
-
-        if (result != vk.VK_SUCCESS) {
-            std.log.err(
-                "Failed to reset command buffer for frame {d}",
-                .{frame_index},
-            );
-            return error.FailedToResetCommandBuffer;
-        }
+        try vkCheck(vk.vkResetCommandBuffer(self.command_buffers[frame_index], 0), error.FailedToResetCommandBuffer);
 
         try self.recordCommandBuffer(
             self.command_buffers[frame_index],
@@ -2150,20 +1919,15 @@ const HelloTriangleApplication = struct {
             .pSignalSemaphores = &self.render_finished_semaphores[image_index_usize],
         };
 
-        result = vk.vkQueueSubmit(
-            self.graphics_queue,
-            1,
-            &submit_info,
-            self.in_flight_fences[frame_index],
+        try vkCheck(
+            vk.vkQueueSubmit(
+                self.graphics_queue,
+                1,
+                &submit_info,
+                self.in_flight_fences[frame_index],
+            ),
+            error.FailedToSubmitFrame,
         );
-
-        if (result != vk.VK_SUCCESS) {
-            std.log.err(
-                "Failed to submit frame {d}",
-                .{frame_index},
-            );
-            return error.FailedToSubmitFrame;
-        }
 
         // 6. Present the rendered image (may trigger recreation)
         try self.presentSwapChainImage(
@@ -2176,7 +1940,7 @@ const HelloTriangleApplication = struct {
             (self.frame_index + 1) % max_frames_in_flight;
     }
 
-    fn destroySyncObjects(self: *HelloTriangleApplication) void {
+    fn destroySyncObjects(self: *App) void {
         if (self.device != null) {
             for (self.present_complete_semaphores) |semaphore| {
                 if (semaphore != null) {
@@ -2237,7 +2001,7 @@ pub fn main() !void {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    var app = HelloTriangleApplication{ .allocator = allocator };
+    var app = App{ .allocator = allocator };
     app.run() catch |err| {
         std.log.err("Error: {s}", .{@errorName(err)});
         std.process.exit(1);
@@ -2312,4 +2076,43 @@ fn chooseSwapMinImageCount(capabilities: vk.VkSurfaceCapabilitiesKHR) u32 {
     }
 
     return image_count;
+}
+
+// +------------------+
+// |  Vulkan Helpers  |
+// +------------------+
+
+// Logs err's name (with the VkResult appended) and returns it when result
+// is anything other than VK_SUCCESS.
+fn vkCheck(result: vk.VkResult, err: anytype) @TypeOf(err)!void {
+    if (result == vk.VK_SUCCESS) return;
+
+    std.log.err("{s} failed (VkResult = {d})", .{ @errorName(err), result });
+    return err;
+}
+
+// Runs the Vulkan "count then fill" enumeration pattern for func, which is
+// called as func(args..., &count, items.ptr) and may return either VkResult
+// or void. The caller owns the returned slice.
+fn vkEnumerate(
+    allocator: std.mem.Allocator,
+    comptime T: type,
+    func: anytype,
+    args: anytype,
+    err: anytype,
+) (std.mem.Allocator.Error || @TypeOf(err))![]T {
+    var count: u32 = 0;
+
+    const count_result = @call(.auto, func, args ++ .{ &count, @as([*c]T, null) });
+    if (@TypeOf(count_result) != void) try vkCheck(count_result, err);
+
+    const items = try allocator.alloc(T, count);
+    errdefer allocator.free(items);
+
+    if (count > 0) {
+        const fill_result = @call(.auto, func, args ++ .{ &count, items.ptr });
+        if (@TypeOf(fill_result) != void) try vkCheck(fill_result, err);
+    }
+
+    return items;
 }
