@@ -469,18 +469,18 @@ const App = struct {
 
         const supports_required_features = self.checkRequiredFeatures(physical_device);
 
-        const is_discrete_gpu = properties.deviceType == vk.VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
+        // const is_discrete_gpu = properties.deviceType == vk.VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
         const has_geometry_shader = features.geometryShader == vk.VK_TRUE;
 
         const suitable = supports_vulkan_1_3 and
             supports_graphics and
             supports_all_extensions and
             supports_required_features and
-            is_discrete_gpu and
+            // is_discrete_gpu and
             has_geometry_shader;
 
         if (!suitable) {
-            std.log.debug("Rejected '{s}': api_1_3={}, graphics={}, extensions={}, features={}, discrete={}, geometry={}", .{ device_name, supports_vulkan_1_3, supports_graphics, supports_all_extensions, supports_required_features, is_discrete_gpu, has_geometry_shader });
+            std.log.debug("Rejected '{s}': api_1_3={}, graphics={}, extensions={}, features={}, geometry={}", .{ device_name, supports_vulkan_1_3, supports_graphics, supports_all_extensions, supports_required_features, has_geometry_shader });
         }
 
         return suitable;
