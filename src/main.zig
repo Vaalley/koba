@@ -15,6 +15,7 @@ const required_device_extensions = [_][*:0]const u8{
     "VK_KHR_swapchain",
 };
 const frames_in_flight_max: u32 = 2;
+const swap_chain_images_max: u32 = 8;
 
 // +--------+
 // |  Main  |
@@ -46,19 +47,20 @@ const Application = struct {
     graphics_family: u32 = 0,
     graphics_queue: vulkan.VkQueue = null,
     swap_chain: vulkan.VkSwapchainKHR = null,
-    swap_chain_images: []vulkan.VkImage = &.{},
+    swap_chain_images: [swap_chain_images_max]vulkan.VkImage = undefined,
+    swap_chain_images_count: u32 = 0,
     swap_chain_surface_format: vulkan.VkSurfaceFormatKHR = undefined,
     swap_chain_extent: vulkan.VkExtent2D = undefined,
-    swap_chain_image_views: []vulkan.VkImageView = &.{},
+    swap_chain_image_views: [swap_chain_images_max]vulkan.VkImageView = undefined,
     framebuffer_resized: bool = false,
     shader_module: vulkan.VkShaderModule = null,
     pipeline_layout: vulkan.VkPipelineLayout = null,
     graphics_pipeline: vulkan.VkPipeline = null,
     command_pool: vulkan.VkCommandPool = null,
-    command_buffers: []vulkan.VkCommandBuffer = &.{},
-    present_complete_semaphores: []vulkan.VkSemaphore = &.{},
-    render_finished_semaphores: []vulkan.VkSemaphore = &.{},
-    in_flight_fences: []vulkan.VkFence = &.{},
+    command_buffers: [frames_in_flight_max]vulkan.VkCommandBuffer = undefined,
+    present_complete_semaphores: [frames_in_flight_max]vulkan.VkSemaphore = undefined,
+    render_finished_semaphores: [swap_chain_images_max]vulkan.VkSemaphore = undefined,
+    in_flight_fences: [frames_in_flight_max]vulkan.VkFence = undefined,
     frame_index: u32 = 0,
 
     // +-------------+
@@ -122,7 +124,7 @@ const Application = struct {
 
         std.log.debug("Creating image views...", .{});
         try self.create_image_views();
-        std.debug.assert(self.swap_chain_image_views.len > 0);
+        std.debug.assert(self.swap_chain_images_count > 0);
 
         std.log.debug("Creating shader modules...", .{});
         try self.initialize_vulkan_create_graphics_pipeline_create_shader_modules();
@@ -288,55 +290,70 @@ const Application = struct {
     }
 
     fn check_validation_layer_support(self: *Application) !bool {
-        const available_layers = try vulkan_enumerate(
-            self.allocator,
-            vulkan.VkLayerProperties,
-            vulkan.vkEnumerateInstanceLayerProperties,
-            .{},
-            error.EnumerationFailed,
+        _ = self;
+        var available_layers: [64]vulkan.VkLayerProperties = undefined;
+        var count: u32 = 0;
+        try vulkan_check(
+            vulkan.vkEnumerateInstanceLayerProperties(&count, null),
+            error.ValidationLayerEnumerationFailed,
         );
-        defer self.allocator.free(available_layers);
+        std.debug.assert(count <= available_layers.len);
+        try vulkan_check(
+            vulkan.vkEnumerateInstanceLayerProperties(&count, &available_layers),
+            error.ValidationLayerEnumerationFailed,
+        );
+        const layers_slice = available_layers[0..count];
 
         for (validation_layers) |layer_name| {
-            const required_name = std.mem.sliceTo(layer_name, 0);
-            const found = for (available_layers) |layer_properties| {
-                const name = std.mem.sliceTo(&layer_properties.layerName, 0);
-                if (std.mem.eql(u8, name, required_name)) break true;
-            } else false;
+            var layer_found = false;
 
-            if (!found) return false;
+            for (layers_slice) |*layer_properties| {
+                const len = std.mem.indexOfScalar(u8, &layer_properties.layerName, 0) orelse layer_properties.layerName.len;
+                const available_name = layer_properties.layerName[0..len];
+                const requested_name = std.mem.span(layer_name);
+
+                if (std.mem.eql(u8, available_name, requested_name)) {
+                    layer_found = true;
+                    break;
+                }
+            }
+
+            if (!layer_found) return false;
         }
 
         return true;
     }
 
     fn check_extension_support(self: *Application, required_extensions: []const [*c]const u8) !void {
-        const available_extensions = try vulkan_enumerate(
-            self.allocator,
-            vulkan.VkExtensionProperties,
-            vulkan.vkEnumerateInstanceExtensionProperties,
-            .{null},
-            error.EnumerationFailed,
+        _ = self;
+        var available_extensions: [256]vulkan.VkExtensionProperties = undefined;
+        var count: u32 = 0;
+        try vulkan_check(
+            vulkan.vkEnumerateInstanceExtensionProperties(null, &count, null),
+            error.ExtensionEnumerationFailed,
         );
-        defer self.allocator.free(available_extensions);
-
-        std.log.debug("Available extensions:", .{});
-        for (available_extensions) |extension| {
-            std.log.debug("\t{s}", .{std.mem.sliceTo(&extension.extensionName, 0)});
-        }
+        std.debug.assert(count <= available_extensions.len);
+        try vulkan_check(
+            vulkan.vkEnumerateInstanceExtensionProperties(null, &count, &available_extensions),
+            error.ExtensionEnumerationFailed,
+        );
+        const extensions_slice = available_extensions[0..count];
 
         for (required_extensions) |required_extension| {
-            const required_name = std.mem.sliceTo(required_extension, 0);
+            var extension_found = false;
 
-            const found = for (available_extensions) |extension| {
-                const name = std.mem.sliceTo(&extension.extensionName, 0);
-                if (std.mem.eql(u8, name, required_name)) break true;
-            } else false;
+            for (extensions_slice) |*extension_properties| {
+                const len = std.mem.indexOfScalar(u8, &extension_properties.extensionName, 0) orelse extension_properties.extensionName.len;
+                const available_name = extension_properties.extensionName[0..len];
+                const requested_name = std.mem.span(required_extension);
 
-            if (!found) {
-                std.log.err("Required extension not supported: {s}", .{required_name});
-                return error.RequiredExtensionNotSupported;
+                if (std.mem.eql(u8, available_name, requested_name)) {
+                    extension_found = true;
+                    break;
+                }
             }
+
+            if (!extension_found) return error.ExtensionNotSupported;
         }
     }
 
@@ -436,33 +453,41 @@ const Application = struct {
     fn initialize_vulkan_pick_physical_device(self: *Application) !void {
         std.debug.assert(self.instance != null);
         std.debug.assert(self.physical_device == null);
-        const physical_devices = try vulkan_enumerate(
-            self.allocator,
-            vulkan.VkPhysicalDevice,
-            vulkan.vkEnumeratePhysicalDevices,
-            .{self.instance},
-            error.EnumerationFailed,
+        var physical_devices: [8]vulkan.VkPhysicalDevice = undefined;
+        var count: u32 = 0;
+        try vulkan_check(
+            vulkan.vkEnumeratePhysicalDevices(self.instance, &count, null),
+            error.PhysicalDeviceEnumerationFailed,
         );
-        defer self.allocator.free(physical_devices);
+        std.debug.assert(count <= physical_devices.len);
+        try vulkan_check(
+            vulkan.vkEnumeratePhysicalDevices(self.instance, &count, &physical_devices),
+            error.PhysicalDeviceEnumerationFailed,
+        );
 
-        if (physical_devices.len == 0) {
-            return error.NoGpuWithVulkanSupport;
+        if (count == 0) {
+            std.log.err("Failed to find GPUs with Vulkan support", .{});
+            return error.NoVulkanGPUs;
         }
 
-        std.log.debug("Found {d} Vulkan-capable GPU(s)", .{physical_devices.len});
-
-        for (physical_devices) |candidate| {
-            if (try self.is_device_suitable(candidate)) {
-                self.physical_device = candidate;
+        const devices_slice = physical_devices[0..count];
+        for (devices_slice) |device| {
+            const suitable = try self.is_device_suitable(device);
+            if (suitable) {
+                self.physical_device = device;
                 break;
             }
         }
 
-        if (self.physical_device == null) return error.NoSuitableGpu;
+        if (self.physical_device == null) {
+            std.log.err("Failed to find a suitable GPU", .{});
+            return error.NoSuitableGPU;
+        }
 
         var properties: vulkan.VkPhysicalDeviceProperties = undefined;
         vulkan.vkGetPhysicalDeviceProperties(self.physical_device, &properties);
-        std.log.info("selected physical device: {s}", .{std.mem.sliceTo(&properties.deviceName, 0)});
+        const len = std.mem.indexOfScalar(u8, &properties.deviceName, 0) orelse properties.deviceName.len;
+        std.log.info("Selected physical device: {s}", .{properties.deviceName[0..len]});
     }
 
     fn is_device_suitable(self: *Application, physical_device: vulkan.VkPhysicalDevice) !bool {
@@ -473,34 +498,57 @@ const Application = struct {
         vulkan.vkGetPhysicalDeviceFeatures(physical_device, &features);
 
         const device_name = std.mem.sliceTo(&properties.deviceName, 0);
-
         const supports_vulkan_1_3 = properties.apiVersion >= vulkan.VK_API_VERSION_1_3;
 
-        const families = try vulkan_enumerate(
-            self.allocator,
-            vulkan.VkQueueFamilyProperties,
-            vulkan.vkGetPhysicalDeviceQueueFamilyProperties,
-            .{physical_device},
-            error.EnumerationFailed,
-        );
-        defer self.allocator.free(families);
+        var families: [16]vulkan.VkQueueFamilyProperties = undefined;
+        var count: u32 = 0;
+        vulkan.vkGetPhysicalDeviceQueueFamilyProperties(physical_device, &count, null);
+        std.debug.assert(count <= families.len);
+        vulkan.vkGetPhysicalDeviceQueueFamilyProperties(physical_device, &count, &families);
+        const families_slice = families[0..count];
 
-        const supports_graphics = for (families) |family| {
+        const supports_graphics = for (families_slice) |family| {
             if ((family.queueFlags & vulkan.VK_QUEUE_GRAPHICS_BIT) != 0) break true;
         } else false;
 
         const supports_all_extensions = try self.check_device_extension_support(physical_device);
-
         const supports_required_features = check_required_features(physical_device);
-
-        // Const is_discrete_gpu = properties.deviceType == vulkan.VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;.
         const has_geometry_shader = features.geometryShader == vulkan.VK_TRUE;
+
+        var swap_chain_adequate = false;
+        if (supports_all_extensions) {
+            var formats: [64]vulkan.VkSurfaceFormatKHR = undefined;
+            var formats_count: u32 = 0;
+            try vulkan_check(
+                vulkan.vkGetPhysicalDeviceSurfaceFormatsKHR(physical_device, self.surface, &formats_count, null),
+                error.FailedToQuerySurfaceFormats,
+            );
+            std.debug.assert(formats_count <= formats.len);
+            try vulkan_check(
+                vulkan.vkGetPhysicalDeviceSurfaceFormatsKHR(physical_device, self.surface, &formats_count, &formats),
+                error.FailedToQuerySurfaceFormats,
+            );
+
+            var modes: [16]vulkan.VkPresentModeKHR = undefined;
+            var modes_count: u32 = 0;
+            try vulkan_check(
+                vulkan.vkGetPhysicalDeviceSurfacePresentModesKHR(physical_device, self.surface, &modes_count, null),
+                error.FailedToQueryPresentModes,
+            );
+            std.debug.assert(modes_count <= modes.len);
+            try vulkan_check(
+                vulkan.vkGetPhysicalDeviceSurfacePresentModesKHR(physical_device, self.surface, &modes_count, &modes),
+                error.FailedToQueryPresentModes,
+            );
+
+            swap_chain_adequate = formats_count > 0 and modes_count > 0;
+        }
 
         const suitable = supports_vulkan_1_3 and
             supports_graphics and
             supports_all_extensions and
             supports_required_features and
-            // Is_discrete_gpu and.
+            swap_chain_adequate and
             has_geometry_shader;
 
         if (!suitable) {
@@ -511,20 +559,25 @@ const Application = struct {
     }
 
     fn check_device_extension_support(self: *Application, physical_device: vulkan.VkPhysicalDevice) !bool {
+        _ = self;
         std.debug.assert(physical_device != null);
-        const available = try vulkan_enumerate(
-            self.allocator,
-            vulkan.VkExtensionProperties,
-            vulkan.vkEnumerateDeviceExtensionProperties,
-            .{ physical_device, null },
+        var available: [512]vulkan.VkExtensionProperties = undefined;
+        var count: u32 = 0;
+        try vulkan_check(
+            vulkan.vkEnumerateDeviceExtensionProperties(physical_device, null, &count, null),
             error.EnumerationFailed,
         );
-        defer self.allocator.free(available);
+        std.debug.assert(count <= available.len);
+        try vulkan_check(
+            vulkan.vkEnumerateDeviceExtensionProperties(physical_device, null, &count, &available),
+            error.EnumerationFailed,
+        );
+        const available_slice = available[0..count];
 
         for (required_device_extensions) |required| {
             const required_name = std.mem.sliceTo(required, 0);
 
-            const found = for (available) |extension| {
+            const found = for (available_slice) |extension| {
                 const available_name = std.mem.sliceTo(&extension.extensionName, 0);
                 if (std.mem.eql(u8, available_name, required_name)) break true;
             } else false;
@@ -534,10 +587,6 @@ const Application = struct {
 
         return true;
     }
-
-    // +----------------------------+
-    // |  Logical Device Selection  |
-    // +----------------------------+
 
     fn initialize_vulkan_create_logical_device_features(
         extended_dynamic_state_features: *vulkan.VkPhysicalDeviceExtendedDynamicStateFeaturesEXT,
@@ -592,17 +641,16 @@ const Application = struct {
     fn initialize_vulkan_create_logical_device(self: *Application) !void {
         std.debug.assert(self.physical_device != null);
         std.debug.assert(self.device == null);
-        const families = try vulkan_enumerate(
-            self.allocator,
-            vulkan.VkQueueFamilyProperties,
-            vulkan.vkGetPhysicalDeviceQueueFamilyProperties,
-            .{self.physical_device},
-            error.EnumerationFailed,
-        );
-        defer self.allocator.free(families);
-        std.log.debug("Device has {d} queue family(ies)", .{families.len});
 
-        self.graphics_family = try self.initialize_vulkan_create_logical_device_find_queue_family(families);
+        var families: [16]vulkan.VkQueueFamilyProperties = undefined;
+        var count: u32 = 0;
+        vulkan.vkGetPhysicalDeviceQueueFamilyProperties(self.physical_device, &count, null);
+        std.debug.assert(count <= families.len);
+        vulkan.vkGetPhysicalDeviceQueueFamilyProperties(self.physical_device, &count, &families);
+        const families_slice = families[0..count];
+        std.log.debug("Device has {d} queue family(ies)", .{count});
+
+        self.graphics_family = try self.initialize_vulkan_create_logical_device_find_queue_family(families_slice);
         std.log.debug("Graphics queue family index: {d}", .{self.graphics_family});
 
         const queue_priorities = [_]f32{0.5};
@@ -659,40 +707,6 @@ const Application = struct {
         );
 
         return capabilities;
-    }
-
-    fn query_surface_formats(self: *Application) ![]vulkan.VkSurfaceFormatKHR {
-        const formats = try vulkan_enumerate(
-            self.allocator,
-            vulkan.VkSurfaceFormatKHR,
-            vulkan.vkGetPhysicalDeviceSurfaceFormatsKHR,
-            .{ self.physical_device, self.surface },
-            error.FailedToQuerySurfaceFormats,
-        );
-        errdefer self.allocator.free(formats);
-
-        if (formats.len == 0) {
-            return error.NoSurfaceFormats;
-        }
-
-        return formats;
-    }
-
-    fn query_present_modes(self: *Application) ![]vulkan.VkPresentModeKHR {
-        const modes = try vulkan_enumerate(
-            self.allocator,
-            vulkan.VkPresentModeKHR,
-            vulkan.vkGetPhysicalDeviceSurfacePresentModesKHR,
-            .{ self.physical_device, self.surface },
-            error.FailedToQueryPresentModes,
-        );
-        errdefer self.allocator.free(modes);
-
-        if (modes.len == 0) {
-            return error.NoPresentModes;
-        }
-
-        return modes;
     }
 
     fn choose_swap_extent(self: *Application, capabilities: vulkan.VkSurfaceCapabilitiesKHR) !vulkan.VkExtent2D {
@@ -768,15 +782,32 @@ const Application = struct {
         std.debug.assert(self.swap_chain == null);
         const capabilities = try self.query_surface_capabilities();
 
-        const formats = try self.query_surface_formats();
-        defer self.allocator.free(formats);
+        var formats: [64]vulkan.VkSurfaceFormatKHR = undefined;
+        var formats_count: u32 = 0;
+        try vulkan_check(
+            vulkan.vkGetPhysicalDeviceSurfaceFormatsKHR(self.physical_device, self.surface, &formats_count, null),
+            error.FailedToQuerySurfaceFormats,
+        );
+        std.debug.assert(formats_count <= formats.len);
+        try vulkan_check(
+            vulkan.vkGetPhysicalDeviceSurfaceFormatsKHR(self.physical_device, self.surface, &formats_count, &formats),
+            error.FailedToQuerySurfaceFormats,
+        );
 
-        const present_modes = try self.query_present_modes();
-        defer self.allocator.free(present_modes);
+        var modes: [16]vulkan.VkPresentModeKHR = undefined;
+        var modes_count: u32 = 0;
+        try vulkan_check(
+            vulkan.vkGetPhysicalDeviceSurfacePresentModesKHR(self.physical_device, self.surface, &modes_count, null),
+            error.FailedToQueryPresentModes,
+        );
+        std.debug.assert(modes_count <= modes.len);
+        try vulkan_check(
+            vulkan.vkGetPhysicalDeviceSurfacePresentModesKHR(self.physical_device, self.surface, &modes_count, &modes),
+            error.FailedToQueryPresentModes,
+        );
 
-        self.swap_chain_surface_format = choose_swap_surface_format(formats);
-
-        const present_mode = try choose_swap_present_mode(present_modes);
+        self.swap_chain_surface_format = choose_swap_surface_format(formats[0..formats_count]);
+        const present_mode = try choose_swap_present_mode(modes[0..modes_count]);
         self.swap_chain_extent = try self.choose_swap_extent(capabilities);
 
         const image_count = choose_swap_minimum_image_count(capabilities);
@@ -795,27 +826,21 @@ const Application = struct {
             self.swap_chain = null;
         }
 
-        self.swap_chain_images = try vulkan_enumerate(
-            self.allocator,
-            vulkan.VkImage,
-            vulkan.vkGetSwapchainImagesKHR,
-            .{ self.device, self.swap_chain },
+        var images_count: u32 = swap_chain_images_max;
+        try vulkan_check(
+            vulkan.vkGetSwapchainImagesKHR(self.device, self.swap_chain, &images_count, &self.swap_chain_images),
             error.FailedToGetSwapchainImages,
         );
+        self.swap_chain_images_count = images_count;
 
-        errdefer {
-            self.allocator.free(self.swap_chain_images);
-            self.swap_chain_images = &.{};
-        }
-
-        if (self.swap_chain_images.len == 0) {
+        if (self.swap_chain_images_count == 0) {
             return error.NoSwapchainImages;
         }
 
         std.log.info(
             "Created swap chain with {d} images at {d}x{d}",
             .{
-                self.swap_chain_images.len,
+                self.swap_chain_images_count,
                 self.swap_chain_extent.width,
                 self.swap_chain_extent.height,
             },
@@ -824,115 +849,75 @@ const Application = struct {
 
     fn create_image_views(self: *Application) !void {
         std.debug.assert(self.device != null);
-        std.debug.assert(self.swap_chain_images.len > 0);
-        std.debug.assert(self.swap_chain_image_views.len == 0);
-        if (self.swap_chain_images.len == 0) {
-            return error.NoSwapChainImages;
-        }
+        std.debug.assert(self.swap_chain_images_count > 0);
+        if (self.device == null) return error.DeviceNotCreated;
+        if (self.swap_chain_images_count == 0) return error.NoSwapChainImages;
 
-        if (self.swap_chain_image_views.len != 0) {
-            return error.ImageViewsAlreadyCreated;
-        }
-
-        const image_views = try self.allocator.alloc(
-            vulkan.VkImageView,
-            self.swap_chain_images.len,
-        );
-
-        var created_count: u32 = 0;
-
+        var i: u32 = 0;
         errdefer {
-            for (image_views[0..created_count]) |image_view| {
-                vulkan.vkDestroyImageView(self.device, image_view, null);
+            while (i > 0) {
+                i -= 1;
+                vulkan.vkDestroyImageView(self.device, self.swap_chain_image_views[i], null);
             }
-
-            self.allocator.free(image_views);
         }
 
-        var image_view_create_information = vulkan.VkImageViewCreateInfo{
-            .sType = vulkan.VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-            .pNext = null,
-            .flags = 0,
-            .image = null,
-            .viewType = vulkan.VK_IMAGE_VIEW_TYPE_2D,
-            .format = self.swap_chain_surface_format.format,
-            .components = .{
-                .r = vulkan.VK_COMPONENT_SWIZZLE_IDENTITY,
-                .g = vulkan.VK_COMPONENT_SWIZZLE_IDENTITY,
-                .b = vulkan.VK_COMPONENT_SWIZZLE_IDENTITY,
-                .a = vulkan.VK_COMPONENT_SWIZZLE_IDENTITY,
-            },
-            .subresourceRange = .{
-                .aspectMask = vulkan.VK_IMAGE_ASPECT_COLOR_BIT,
-                .baseMipLevel = 0,
-                .levelCount = 1,
-                .baseArrayLayer = 0,
-                .layerCount = 1,
-            },
-        };
-
-        for (self.swap_chain_images, 0..) |image, index| {
-            image_view_create_information.image = image;
+        while (i < self.swap_chain_images_count) : (i += 1) {
+            const create_information = vulkan.VkImageViewCreateInfo{
+                .sType = vulkan.VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+                .pNext = null,
+                .flags = 0,
+                .image = self.swap_chain_images[i],
+                .viewType = vulkan.VK_IMAGE_VIEW_TYPE_2D,
+                .format = self.swap_chain_surface_format.format,
+                .components = .{
+                    .r = vulkan.VK_COMPONENT_SWIZZLE_IDENTITY,
+                    .g = vulkan.VK_COMPONENT_SWIZZLE_IDENTITY,
+                    .b = vulkan.VK_COMPONENT_SWIZZLE_IDENTITY,
+                    .a = vulkan.VK_COMPONENT_SWIZZLE_IDENTITY,
+                },
+                .subresourceRange = .{
+                    .aspectMask = vulkan.VK_IMAGE_ASPECT_COLOR_BIT,
+                    .baseMipLevel = 0,
+                    .levelCount = 1,
+                    .baseArrayLayer = 0,
+                    .layerCount = 1,
+                },
+            };
 
             try vulkan_check(
-                vulkan.vkCreateImageView(self.device, &image_view_create_information, null, &image_views[index]),
+                vulkan.vkCreateImageView(
+                    self.device,
+                    &create_information,
+                    null,
+                    &self.swap_chain_image_views[i],
+                ),
                 error.FailedToCreateImageView,
             );
-
-            created_count += 1;
         }
-
-        self.swap_chain_image_views = image_views;
-
-        std.log.debug("Created {d} swap-chain image views", .{
-            self.swap_chain_image_views.len,
-        });
     }
 
     fn cleanup_swap_chain_destroy_image_views(self: *Application) void {
-        std.debug.assert(self.device != null);
-        for (self.swap_chain_image_views) |image_view| {
-            vulkan.vkDestroyImageView(self.device, image_view, null);
-        }
+        if (self.device == null) return;
 
-        if (self.swap_chain_image_views.len != 0) {
-            self.allocator.free(self.swap_chain_image_views);
+        if (self.swap_chain_images_count > 0) {
+            std.log.debug("Destroying swap chain image view(s)", .{});
+            var i: u32 = 0;
+            while (i < self.swap_chain_images_count) : (i += 1) {
+                vulkan.vkDestroyImageView(self.device, self.swap_chain_image_views[i], null);
+            }
         }
-
-        self.swap_chain_image_views = &.{};
     }
 
     fn cleanup_swap_chain(self: *Application) void {
-        if (self.device != null) {
-            for (self.swap_chain_image_views) |image_view| {
-                if (image_view != null) {
-                    vulkan.vkDestroyImageView(
-                        self.device,
-                        image_view,
-                        null,
-                    );
-                }
-            }
-        }
+        self.cleanup_swap_chain_destroy_image_views();
 
-        if (self.swap_chain_image_views.len != 0) {
-            self.allocator.free(self.swap_chain_image_views);
-            self.swap_chain_image_views = &.{};
-        }
-
-        if (self.swap_chain != null) {
-            vulkan.vkDestroySwapchainKHR(
-                self.device,
-                self.swap_chain,
-                null,
-            );
+        if (self.swap_chain != null and self.device != null) {
+            std.log.debug("Destroying swap chain", .{});
+            vulkan.vkDestroySwapchainKHR(self.device, self.swap_chain, null);
             self.swap_chain = null;
         }
 
-        if (self.swap_chain_images.len != 0) {
-            self.allocator.free(self.swap_chain_images);
-            self.swap_chain_images = &.{};
-        }
+        self.swap_chain_images_count = 0;
     }
 
     fn wait_for_drawable_size(self: *Application) !void {
@@ -1505,42 +1490,39 @@ const Application = struct {
     fn initialize_vulkan_create_command_buffers(self: *Application) !void {
         std.debug.assert(self.device != null);
         std.debug.assert(self.command_pool != null);
-        std.debug.assert(self.command_buffers.len == 0);
-        if (self.device == null) {
-            return error.DeviceNotCreated;
-        }
-
-        if (self.command_pool == null) {
-            return error.CommandPoolNotCreated;
-        }
-
-        if (self.command_buffers.len != 0) {
-            return error.CommandBuffersAlreadyCreated;
-        }
-
-        self.command_buffers = try self.allocator.alloc(
-            vulkan.VkCommandBuffer,
-            frames_in_flight_max,
-        );
-        errdefer {
-            self.allocator.free(self.command_buffers);
-            self.command_buffers = &.{};
-        }
+        if (self.device == null) return error.DeviceNotCreated;
+        if (self.command_pool == null) return error.CommandPoolNotCreated;
 
         const allocation_information = vulkan.VkCommandBufferAllocateInfo{
             .sType = vulkan.VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
             .pNext = null,
             .commandPool = self.command_pool,
             .level = vulkan.VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-            .commandBufferCount = @intCast(frames_in_flight_max),
+            .commandBufferCount = frames_in_flight_max,
         };
 
-        try vulkan_check(vulkan.vkAllocateCommandBuffers(self.device, &allocation_information, self.command_buffers.ptr), error.FailedToAllocateCommandBuffers);
-
-        std.log.debug(
-            "Allocated {d} command buffers for frames in flight",
-            .{frames_in_flight_max},
+        try vulkan_check(
+            vulkan.vkAllocateCommandBuffers(
+                self.device,
+                &allocation_information,
+                &self.command_buffers,
+            ),
+            error.FailedToAllocateCommandBuffers,
         );
+
+        std.log.debug("Allocated Vulkan command buffers", .{});
+    }
+
+    fn cleanup_destroy_command_buffers(self: *Application) void {
+        if (self.command_pool != null and self.device != null) {
+            std.log.debug("Freeing command buffers", .{});
+            vulkan.vkFreeCommandBuffers(
+                self.device,
+                self.command_pool,
+                frames_in_flight_max,
+                &self.command_buffers,
+            );
+        }
     }
 
     fn transition_image_layout(
@@ -1555,7 +1537,7 @@ const Application = struct {
         target_stage_mask: vulkan.VkPipelineStageFlags2,
     ) !void {
         std.debug.assert(command_buffer != null);
-        std.debug.assert(image_index < self.swap_chain_images.len);
+        std.debug.assert(image_index < self.swap_chain_images_count);
         const index = image_index;
 
         if (index >= self.swap_chain_images.len) {
@@ -1696,11 +1678,9 @@ const Application = struct {
         image_index: u32,
     ) !void {
         std.debug.assert(command_buffer != null);
-        std.debug.assert(image_index < self.swap_chain_images.len);
-        std.debug.assert(image_index < self.swap_chain_image_views.len);
+        std.debug.assert(image_index < self.swap_chain_images_count);
         if (self.graphics_pipeline == null) return error.GraphicsPipelineNotCreated;
-        if (image_index >= self.swap_chain_images.len) return error.SwapChainImageIndexOutOfRange;
-        if (image_index >= self.swap_chain_image_views.len) return error.SwapChainImageViewIndexOutOfRange;
+        if (image_index >= self.swap_chain_images_count) return error.SwapChainImageIndexOutOfRange;
 
         const begin_information = vulkan.VkCommandBufferBeginInfo{
             .sType = vulkan.VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
@@ -1748,25 +1728,6 @@ const Application = struct {
         try vulkan_check(vulkan.vkEndCommandBuffer(command_buffer), error.FailedToEndCommandBuffer);
     }
 
-    fn cleanup_destroy_command_buffers(self: *Application) void {
-        if (self.device != null and
-            self.command_pool != null and
-            self.command_buffers.len != 0)
-        {
-            vulkan.vkFreeCommandBuffers(
-                self.device,
-                self.command_pool,
-                @intCast(self.command_buffers.len),
-                self.command_buffers.ptr,
-            );
-        }
-
-        if (self.command_buffers.len != 0) {
-            self.allocator.free(self.command_buffers);
-            self.command_buffers = &.{};
-        }
-    }
-
     // +-------------------+
     // |  Synchronization  |
     // +-------------------+
@@ -1811,7 +1772,7 @@ const Application = struct {
             );
         }
 
-        while (created_render_finished < self.swap_chain_images.len) : (created_render_finished += 1) {
+        while (created_render_finished < self.swap_chain_images_count) : (created_render_finished += 1) {
             try vulkan_check(
                 vulkan.vkCreateSemaphore(
                     self.device,
@@ -1855,34 +1816,9 @@ const Application = struct {
 
     fn initialize_vulkan_create_synchronization_objects(self: *Application) !void {
         std.debug.assert(self.device != null);
-        std.debug.assert(self.swap_chain_images.len > 0);
-        std.debug.assert(self.present_complete_semaphores.len == 0);
-        std.debug.assert(self.render_finished_semaphores.len == 0);
-        std.debug.assert(self.in_flight_fences.len == 0);
+        std.debug.assert(self.swap_chain_images_count > 0);
         if (self.device == null) return error.DeviceNotCreated;
-        if (self.swap_chain_images.len == 0) return error.NoSwapChainImages;
-        if (self.present_complete_semaphores.len != 0 or
-            self.render_finished_semaphores.len != 0 or
-            self.in_flight_fences.len != 0)
-        {
-            return error.SyncObjectsAlreadyCreated;
-        }
-
-        self.present_complete_semaphores = try self.allocator.alloc(vulkan.VkSemaphore, frames_in_flight_max);
-        errdefer {
-            self.allocator.free(self.present_complete_semaphores);
-            self.present_complete_semaphores = &.{};
-        }
-        self.render_finished_semaphores = try self.allocator.alloc(vulkan.VkSemaphore, self.swap_chain_images.len);
-        errdefer {
-            self.allocator.free(self.render_finished_semaphores);
-            self.render_finished_semaphores = &.{};
-        }
-        self.in_flight_fences = try self.allocator.alloc(vulkan.VkFence, frames_in_flight_max);
-        errdefer {
-            self.allocator.free(self.in_flight_fences);
-            self.in_flight_fences = &.{};
-        }
+        if (self.swap_chain_images_count == 0) return error.NoSwapChainImages;
 
         const semaphore_information = vulkan.VkSemaphoreCreateInfo{
             .sType = vulkan.VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
@@ -1902,7 +1838,7 @@ const Application = struct {
             "Created synchronization objects for {d} frames and {d} swap-chain images",
             .{
                 frames_in_flight_max,
-                self.swap_chain_images.len,
+                self.swap_chain_images_count,
             },
         );
     }
@@ -1911,18 +1847,12 @@ const Application = struct {
         std.debug.assert(self.device != null);
         std.debug.assert(self.graphics_queue != null);
         std.debug.assert(self.swap_chain != null);
-        std.debug.assert(self.command_buffers.len == frames_in_flight_max);
-        std.debug.assert(self.present_complete_semaphores.len == frames_in_flight_max);
-        std.debug.assert(self.in_flight_fences.len == frames_in_flight_max);
-        std.debug.assert(self.render_finished_semaphores.len == self.swap_chain_images.len);
+        std.debug.assert(self.swap_chain_images_count > 0);
 
         if (self.device == null) return error.DeviceNotCreated;
         if (self.graphics_queue == null) return error.GraphicsQueueNotCreated;
         if (self.swap_chain == null) return error.SwapChainNotCreated;
-        if (self.command_buffers.len != frames_in_flight_max) return error.CommandBuffersNotReady;
-        if (self.present_complete_semaphores.len != frames_in_flight_max) return error.AcquireSemaphoresNotReady;
-        if (self.in_flight_fences.len != frames_in_flight_max) return error.InFlightFencesNotReady;
-        if (self.render_finished_semaphores.len != self.swap_chain_images.len) return error.RenderFinishedSemaphoresNotReady;
+        if (self.swap_chain_images_count == 0) return error.NoSwapChainImages;
     }
 
     fn draw_frame_submit_command_buffer(
@@ -1981,8 +1911,7 @@ const Application = struct {
             self.present_complete_semaphores[frame_index],
         )) orelse return;
 
-        if (image_index >= self.swap_chain_images.len) return error.AcquiredImageIndexOutOfBounds;
-        if (image_index >= self.render_finished_semaphores.len) return error.RenderFinishedSemaphoreIndexOutOfBounds;
+        if (image_index >= self.swap_chain_images_count) return error.AcquiredImageIndexOutOfBounds;
 
         // Reset the fence before submitting command buffers to the queue.
         // This moves the fence back into an unsignaled state so we can wait on it in the next loop.
@@ -2005,53 +1934,22 @@ const Application = struct {
 
     fn cleanup_destroy_synchronization_objects(self: *Application) void {
         if (self.device != null) {
+            std.log.debug("Destroying acquire semaphores", .{});
             for (self.present_complete_semaphores) |semaphore| {
-                if (semaphore != null) {
-                    vulkan.vkDestroySemaphore(
-                        self.device,
-                        semaphore,
-                        null,
-                    );
-                }
+                vulkan.vkDestroySemaphore(self.device, semaphore, null);
             }
 
-            for (self.render_finished_semaphores) |semaphore| {
-                if (semaphore != null) {
-                    vulkan.vkDestroySemaphore(
-                        self.device,
-                        semaphore,
-                        null,
-                    );
-                }
+            std.log.debug("Destroying render finished semaphores", .{});
+            var i: u32 = 0;
+            while (i < self.swap_chain_images_count) : (i += 1) {
+                vulkan.vkDestroySemaphore(self.device, self.render_finished_semaphores[i], null);
             }
 
+            std.log.debug("Destroying in flight fences", .{});
             for (self.in_flight_fences) |fence| {
-                if (fence != null) {
-                    vulkan.vkDestroyFence(
-                        self.device,
-                        fence,
-                        null,
-                    );
-                }
+                vulkan.vkDestroyFence(self.device, fence, null);
             }
         }
-
-        if (self.present_complete_semaphores.len != 0) {
-            self.allocator.free(self.present_complete_semaphores);
-            self.present_complete_semaphores = &.{};
-        }
-
-        if (self.render_finished_semaphores.len != 0) {
-            self.allocator.free(self.render_finished_semaphores);
-            self.render_finished_semaphores = &.{};
-        }
-
-        if (self.in_flight_fences.len != 0) {
-            self.allocator.free(self.in_flight_fences);
-            self.in_flight_fences = &.{};
-        }
-
-        self.frame_index = 0;
     }
 };
 
@@ -2163,8 +2061,8 @@ fn choose_swap_present_mode(available_modes: []const vulkan.VkPresentModeKHR) !v
 
     for (available_modes) |mode| {
         // Uncomment to enable immediate mode (no vsync -> no frames_per_second cap).
-        // If (mode == vulkan.VK_PRESENT_MODE_IMMEDIATE_KHR) {.
-        // Return vulkan.VK_PRESENT_MODE_IMMEDIATE_KHR;.
+        // if (mode == vulkan.VK_PRESENT_MODE_IMMEDIATE_KHR) {
+        //     return vulkan.VK_PRESENT_MODE_IMMEDIATE_KHR;
         // }
 
         // Mailbox mode (triple buffering) is preferred as it avoids tearing while maintaining
@@ -2206,27 +2104,4 @@ fn vulkan_check(result: vulkan.VkResult, failure: anytype) @TypeOf(failure)!void
 
     std.log.err("{s} failed (VkResult = {d})", .{ @errorName(failure), result });
     return failure;
-}
-
-fn vulkan_enumerate(
-    allocator: std.mem.Allocator,
-    comptime ElementType: type,
-    function: anytype,
-    arguments: anytype,
-    failure: anytype,
-) (std.mem.Allocator.Error || @TypeOf(failure))![]ElementType {
-    var count: u32 = 0;
-
-    const count_result = @call(.auto, function, arguments ++ .{ &count, @as([*c]ElementType, null) });
-    if (@TypeOf(count_result) != void) try vulkan_check(count_result, failure);
-
-    const items = try allocator.alloc(ElementType, count);
-    errdefer allocator.free(items);
-
-    if (count > 0) {
-        const fill_result = @call(.auto, function, arguments ++ .{ &count, items.ptr });
-        if (@TypeOf(fill_result) != void) try vulkan_check(fill_result, failure);
-    }
-
-    return items;
 }
