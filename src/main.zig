@@ -8,7 +8,7 @@ const enable_validation_layers = builtin.mode == .Debug;
 const required_device_extensions = [_][*:0]const u8{
     "VK_KHR_swapchain",
 };
-const max_frames_in_flight: usize = 2;
+const max_frames_in_flight: u32 = 2;
 
 const App = struct {
     const WIDTH: u32 = 1280;
@@ -37,7 +37,7 @@ const App = struct {
     present_complete_semaphores: []vk.VkSemaphore = &.{},
     render_finished_semaphores: []vk.VkSemaphore = &.{},
     in_flight_fences: []vk.VkFence = &.{},
-    frame_index: usize = 0,
+    frame_index: u32 = 0,
 
     // +-------------+
     // |  Lifecycle  |
@@ -746,7 +746,7 @@ const App = struct {
             self.swap_chain_images.len,
         );
 
-        var created_count: usize = 0;
+        var created_count: u32 = 0;
 
         errdefer {
             for (image_views[0..created_count]) |image_view| {
@@ -1242,7 +1242,7 @@ const App = struct {
         defer file.close(io);
 
         const file_stat = try file.stat(io);
-        const byte_count: usize = @intCast(file_stat.size);
+        const byte_count: u32 = @intCast(file_stat.size);
 
         if (byte_count == 0) {
             return error.EmptyShaderFile;
@@ -1420,7 +1420,7 @@ const App = struct {
         src_stage_mask: vk.VkPipelineStageFlags2,
         dst_stage_mask: vk.VkPipelineStageFlags2,
     ) !void {
-        const index: usize = @intCast(image_index);
+        const index = image_index;
 
         if (index >= self.swap_chain_images.len) {
             return error.SwapChainImageIndexOutOfRange;
@@ -1468,7 +1468,7 @@ const App = struct {
     fn recordCommandBuffer(
         self: *App,
         command_buffer: vk.VkCommandBuffer,
-        image_index: usize,
+        image_index: u32,
     ) !void {
         if (self.graphics_pipeline == null) {
             return error.GraphicsPipelineNotCreated;
@@ -1497,7 +1497,7 @@ const App = struct {
 
         try self.transitionImageLayout(
             command_buffer,
-            @intCast(image_index),
+            image_index,
             vk.VK_IMAGE_LAYOUT_UNDEFINED,
             vk.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
             0,
@@ -1693,7 +1693,7 @@ const App = struct {
             .flags = vk.VK_FENCE_CREATE_SIGNALED_BIT,
         };
 
-        var created_present_complete: usize = 0;
+        var created_present_complete: u32 = 0;
         errdefer {
             while (created_present_complete > 0) {
                 created_present_complete -= 1;
@@ -1705,7 +1705,7 @@ const App = struct {
             }
         }
 
-        var created_render_finished: usize = 0;
+        var created_render_finished: u32 = 0;
         errdefer {
             while (created_render_finished > 0) {
                 created_render_finished -= 1;
@@ -1717,7 +1717,7 @@ const App = struct {
             }
         }
 
-        var created_fences: usize = 0;
+        var created_fences: u32 = 0;
         errdefer {
             while (created_fences > 0) {
                 created_fences -= 1;
@@ -1822,13 +1822,11 @@ const App = struct {
             self.present_complete_semaphores[frame_index],
         )) orelse return;
 
-        const image_index_usize: usize = @intCast(image_index);
-
-        if (image_index_usize >= self.swap_chain_images.len) {
+        if (image_index >= self.swap_chain_images.len) {
             return error.AcquiredImageIndexOutOfBounds;
         }
 
-        if (image_index_usize >= self.render_finished_semaphores.len) {
+        if (image_index >= self.render_finished_semaphores.len) {
             return error.RenderFinishedSemaphoreIndexOutOfBounds;
         }
 
@@ -1840,7 +1838,7 @@ const App = struct {
 
         try self.recordCommandBuffer(
             self.command_buffers[frame_index],
-            image_index_usize,
+            image_index,
         );
 
         // 5. Submit the command buffer
@@ -1855,7 +1853,7 @@ const App = struct {
             .commandBufferCount = 1,
             .pCommandBuffers = &self.command_buffers[frame_index],
             .signalSemaphoreCount = 1,
-            .pSignalSemaphores = &self.render_finished_semaphores[image_index_usize],
+            .pSignalSemaphores = &self.render_finished_semaphores[image_index],
         };
 
         try vkCheck(
@@ -1870,7 +1868,7 @@ const App = struct {
 
         // 6. Present the rendered image (may trigger recreation)
         try self.presentSwapChainImage(
-            self.render_finished_semaphores[image_index_usize],
+            self.render_finished_semaphores[image_index],
             image_index,
         );
 
