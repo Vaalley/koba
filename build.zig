@@ -13,9 +13,9 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
-    // **********
-    // *  SDL3  *
-    // **********
+    // +--------+
+    // |  SDL3  |
+    // +--------+
     const sdl3_path = "third_party/SDL3";
 
     const sdl3_translate_c = b.addTranslateC(.{
@@ -36,9 +36,9 @@ pub fn build(b: *std.Build) void {
 
     exe.root_module.addImport("sdl3", sdl3_module);
 
-    // ************
-    // *  Vulkan  *
-    // ************
+    // +----------+
+    // |  Vulkan  |
+    // +----------+
     const vulkan_sdk = "C:/VulkanSDK/1.4.350.0";
     const vulkan_include = std.Build.LazyPath{ .cwd_relative = vulkan_sdk ++ "/Include" };
     const vulkan_lib = std.Build.LazyPath{ .cwd_relative = vulkan_sdk ++ "/Lib" };
