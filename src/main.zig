@@ -10,6 +10,22 @@ const required_device_extensions = [_][*:0]const u8{
 };
 const max_frames_in_flight: u32 = 2;
 
+// +--------+
+// |  Main  |
+// +--------+
+
+pub fn main() !void {
+    var gpa = std.heap.DebugAllocator(.{}){};
+    defer _ = gpa.deinit();
+    const allocator = gpa.allocator();
+
+    var app = App{ .allocator = allocator };
+    app.run() catch |err| {
+        std.log.err("Error: {s}", .{@errorName(err)});
+        std.process.exit(1);
+    };
+}
+
 const App = struct {
     const WIDTH: u32 = 1280;
     const HEIGHT: u32 = 720;
@@ -1929,21 +1945,6 @@ const App = struct {
     }
 };
 
-// +--------+
-// |  Main  |
-// +--------+
-
-pub fn main() !void {
-    var gpa = std.heap.DebugAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
-
-    var app = App{ .allocator = allocator };
-    app.run() catch |err| {
-        std.log.err("Error: {s}", .{@errorName(err)});
-        std.process.exit(1);
-    };
-}
 
 // +---------------+
 // |  FPS Counter  |
