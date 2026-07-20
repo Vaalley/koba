@@ -539,20 +539,39 @@ const Application = struct {
     // |  Logical Device Selection  |
     // +----------------------------+
 
-    fn initialize_vulkan_create_logical_device(self: *Application) !void {
-        std.debug.assert(self.physical_device != null);
-        std.debug.assert(self.device == null);
-        const families = try vulkan_enumerate(
-            self.allocator,
-            vulkan.VkQueueFamilyProperties,
-            vulkan.vkGetPhysicalDeviceQueueFamilyProperties,
-            .{self.physical_device},
-            error.EnumerationFailed,
-        );
-        defer self.allocator.free(families);
-        std.log.debug("Device has {d} queue family(ies)", .{families.len});
+    fn initialize_vulkan_create_logical_device_features(
+        extended_dynamic_state_features: *vulkan.VkPhysicalDeviceExtendedDynamicStateFeaturesEXT,
+        vulkan_1_3_features: *vulkan.VkPhysicalDeviceVulkan13Features,
+        vulkan_1_1_features: *vulkan.VkPhysicalDeviceVulkan11Features,
+    ) vulkan.VkPhysicalDeviceFeatures2 {
+        extended_dynamic_state_features.* = .{
+            .sType = vulkan.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_FEATURES_EXT,
+            .pNext = null,
+            .extendedDynamicState = vulkan.VK_TRUE,
+        };
+        vulkan_1_3_features.* = .{
+            .sType = vulkan.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
+            .pNext = extended_dynamic_state_features,
+            .dynamicRendering = vulkan.VK_TRUE,
+            .synchronization2 = vulkan.VK_TRUE,
+        };
+        vulkan_1_1_features.* = .{
+            .sType = vulkan.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES,
+            .pNext = vulkan_1_3_features,
+            .shaderDrawParameters = vulkan.VK_TRUE,
+        };
+        return .{
+            .sType = vulkan.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
+            .pNext = vulkan_1_1_features,
+            .features = std.mem.zeroes(vulkan.VkPhysicalDeviceFeatures),
+        };
+    }
 
-        self.graphics_family = for (families, 0..) |family, i| {
+    fn initialize_vulkan_create_logical_device_find_queue_family(
+        self: *Application,
+        families: []const vulkan.VkQueueFamilyProperties,
+    ) !u32 {
+        return for (families, 0..) |family, i| {
             if ((family.queueFlags & vulkan.VK_QUEUE_GRAPHICS_BIT) == 0) continue;
 
             var supports_present: vulkan.VkBool32 = vulkan.VK_FALSE;
@@ -567,8 +586,23 @@ const Application = struct {
             );
 
             if (supports_present == vulkan.VK_TRUE) break @intCast(i);
-        } else return error.NoGraphicsPresentQueueFamily;
+        } else error.NoGraphicsPresentQueueFamily;
+    }
 
+    fn initialize_vulkan_create_logical_device(self: *Application) !void {
+        std.debug.assert(self.physical_device != null);
+        std.debug.assert(self.device == null);
+        const families = try vulkan_enumerate(
+            self.allocator,
+            vulkan.VkQueueFamilyProperties,
+            vulkan.vkGetPhysicalDeviceQueueFamilyProperties,
+            .{self.physical_device},
+            error.EnumerationFailed,
+        );
+        defer self.allocator.free(families);
+        std.log.debug("Device has {d} queue family(ies)", .{families.len});
+
+        self.graphics_family = try self.initialize_vulkan_create_logical_device_find_queue_family(families);
         std.log.debug("Graphics queue family index: {d}", .{self.graphics_family});
 
         const queue_priorities = [_]f32{0.5};
@@ -581,27 +615,14 @@ const Application = struct {
             .pQueuePriorities = &queue_priorities,
         };
 
-        var extended_dynamic_state_features: vulkan.VkPhysicalDeviceExtendedDynamicStateFeaturesEXT = .{
-            .sType = vulkan.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_FEATURES_EXT,
-            .pNext = null,
-            .extendedDynamicState = vulkan.VK_TRUE,
-        };
-        var vulkan_1_3_features: vulkan.VkPhysicalDeviceVulkan13Features = .{
-            .sType = vulkan.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES,
-            .pNext = &extended_dynamic_state_features,
-            .dynamicRendering = vulkan.VK_TRUE,
-            .synchronization2 = vulkan.VK_TRUE,
-        };
-        var vulkan_1_1_features: vulkan.VkPhysicalDeviceVulkan11Features = .{
-            .sType = vulkan.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES,
-            .pNext = &vulkan_1_3_features,
-            .shaderDrawParameters = vulkan.VK_TRUE,
-        };
-        var features2: vulkan.VkPhysicalDeviceFeatures2 = .{
-            .sType = vulkan.VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
-            .pNext = &vulkan_1_1_features,
-            .features = std.mem.zeroes(vulkan.VkPhysicalDeviceFeatures),
-        };
+        var extended_dynamic_state_features: vulkan.VkPhysicalDeviceExtendedDynamicStateFeaturesEXT = undefined;
+        var vulkan_1_3_features: vulkan.VkPhysicalDeviceVulkan13Features = undefined;
+        var vulkan_1_1_features: vulkan.VkPhysicalDeviceVulkan11Features = undefined;
+        var features2 = initialize_vulkan_create_logical_device_features(
+            &extended_dynamic_state_features,
+            &vulkan_1_3_features,
+            &vulkan_1_1_features,
+        );
 
         const device_create_information = vulkan.VkDeviceCreateInfo{
             .sType = vulkan.VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
@@ -624,10 +645,6 @@ const Application = struct {
         vulkan.vkGetDeviceQueue(self.device, self.graphics_family, 0, &self.graphics_queue);
         std.log.info("Logical device created successfully", .{});
     }
-
-    // +--------------+
-    // |  Swap Chain  |
-    // +--------------+
 
     fn query_surface_capabilities(self: *Application) !vulkan.VkSurfaceCapabilitiesKHR {
         var capabilities: vulkan.VkSurfaceCapabilitiesKHR = undefined;
@@ -716,6 +733,35 @@ const Application = struct {
         };
     }
 
+    fn create_swap_chain_create_information(
+        self: *Application,
+        surface_extent: vulkan.VkExtent2D,
+        present_mode: vulkan.VkPresentModeKHR,
+        image_count: u32,
+        capabilities: vulkan.VkSurfaceCapabilitiesKHR,
+    ) vulkan.VkSwapchainCreateInfoKHR {
+        return .{
+            .sType = vulkan.VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
+            .pNext = null,
+            .flags = 0,
+            .surface = self.surface,
+            .minImageCount = image_count,
+            .imageFormat = self.swap_chain_surface_format.format,
+            .imageColorSpace = self.swap_chain_surface_format.colorSpace,
+            .imageExtent = surface_extent,
+            .imageArrayLayers = 1,
+            .imageUsage = vulkan.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+            .imageSharingMode = vulkan.VK_SHARING_MODE_EXCLUSIVE,
+            .queueFamilyIndexCount = 0,
+            .pQueueFamilyIndices = null,
+            .preTransform = capabilities.currentTransform,
+            .compositeAlpha = vulkan.VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
+            .presentMode = present_mode,
+            .clipped = vulkan.VK_TRUE,
+            .oldSwapchain = null,
+        };
+    }
+
     fn create_swap_chain(self: *Application) !void {
         std.debug.assert(self.device != null);
         std.debug.assert(self.surface != null);
@@ -735,26 +781,12 @@ const Application = struct {
 
         const image_count = choose_swap_minimum_image_count(capabilities);
 
-        const create_information = vulkan.VkSwapchainCreateInfoKHR{
-            .sType = vulkan.VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
-            .pNext = null,
-            .flags = 0,
-            .surface = self.surface,
-            .minImageCount = image_count,
-            .imageFormat = self.swap_chain_surface_format.format,
-            .imageColorSpace = self.swap_chain_surface_format.colorSpace,
-            .imageExtent = self.swap_chain_extent,
-            .imageArrayLayers = 1,
-            .imageUsage = vulkan.VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
-            .imageSharingMode = vulkan.VK_SHARING_MODE_EXCLUSIVE,
-            .queueFamilyIndexCount = 0,
-            .pQueueFamilyIndices = null,
-            .preTransform = capabilities.currentTransform,
-            .compositeAlpha = vulkan.VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
-            .presentMode = present_mode,
-            .clipped = vulkan.VK_TRUE,
-            .oldSwapchain = null,
-        };
+        const create_information = self.create_swap_chain_create_information(
+            self.swap_chain_extent,
+            present_mode,
+            image_count,
+            capabilities,
+        );
 
         try vulkan_check(vulkan.vkCreateSwapchainKHR(self.device, &create_information, null, &self.swap_chain), error.FailedToCreateSwapchain);
 
@@ -1072,49 +1104,8 @@ const Application = struct {
         std.log.debug("Created Vulkan pipeline layout", .{});
     }
 
-    fn initialize_vulkan_create_graphics_pipeline(self: *Application) !void {
-        std.debug.assert(self.device != null);
-        std.debug.assert(self.shader_module != null);
-        std.debug.assert(self.pipeline_layout != null);
-        std.debug.assert(self.graphics_pipeline == null);
-        if (self.device == null) {
-            return error.DeviceNotCreated;
-        }
-
-        if (self.shader_module == null) {
-            return error.ShaderModuleNotCreated;
-        }
-
-        if (self.pipeline_layout == null) {
-            return error.PipelineLayoutNotCreated;
-        }
-
-        if (self.graphics_pipeline != null) {
-            return error.GraphicsPipelineAlreadyCreated;
-        }
-
-        const shader_stages = [_]vulkan.VkPipelineShaderStageCreateInfo{
-            .{
-                .sType = vulkan.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-                .pNext = null,
-                .flags = 0,
-                .stage = vulkan.VK_SHADER_STAGE_VERTEX_BIT,
-                .module = self.shader_module,
-                .pName = "vertMain",
-                .pSpecializationInfo = null,
-            },
-            .{
-                .sType = vulkan.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-                .pNext = null,
-                .flags = 0,
-                .stage = vulkan.VK_SHADER_STAGE_FRAGMENT_BIT,
-                .module = self.shader_module,
-                .pName = "fragMain",
-                .pSpecializationInfo = null,
-            },
-        };
-
-        const vertex_input = vulkan.VkPipelineVertexInputStateCreateInfo{
+    fn initialize_vulkan_create_graphics_pipeline_vertex_input_state() vulkan.VkPipelineVertexInputStateCreateInfo {
+        return .{
             .sType = vulkan.VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
             .pNext = null,
             .flags = 0,
@@ -1123,43 +1114,35 @@ const Application = struct {
             .vertexAttributeDescriptionCount = 0,
             .pVertexAttributeDescriptions = null,
         };
+    }
 
-        const input_assembly = vulkan.VkPipelineInputAssemblyStateCreateInfo{
+    fn initialize_vulkan_create_graphics_pipeline_input_assembly_state() vulkan.VkPipelineInputAssemblyStateCreateInfo {
+        return .{
             .sType = vulkan.VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
             .pNext = null,
             .flags = 0,
             .topology = vulkan.VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
             .primitiveRestartEnable = vulkan.VK_FALSE,
         };
+    }
 
-        const viewport = vulkan.VkViewport{
-            .x = 0.0,
-            .y = 0.0,
-            .width = @floatFromInt(self.swap_chain_extent.width),
-            .height = @floatFromInt(self.swap_chain_extent.height),
-            .minDepth = 0.0,
-            .maxDepth = 1.0,
-        };
-
-        const scissor = vulkan.VkRect2D{
-            .offset = .{
-                .x = 0,
-                .y = 0,
-            },
-            .extent = self.swap_chain_extent,
-        };
-
-        const viewport_state = vulkan.VkPipelineViewportStateCreateInfo{
+    fn initialize_vulkan_create_graphics_pipeline_viewport_state(
+        viewport: *const vulkan.VkViewport,
+        scissor: *const vulkan.VkRect2D,
+    ) vulkan.VkPipelineViewportStateCreateInfo {
+        return .{
             .sType = vulkan.VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
             .pNext = null,
             .flags = 0,
             .viewportCount = 1,
-            .pViewports = &viewport,
+            .pViewports = viewport,
             .scissorCount = 1,
-            .pScissors = &scissor,
+            .pScissors = scissor,
         };
+    }
 
-        const rasterizer = vulkan.VkPipelineRasterizationStateCreateInfo{
+    fn initialize_vulkan_create_graphics_pipeline_rasterization_state() vulkan.VkPipelineRasterizationStateCreateInfo {
+        return .{
             .sType = vulkan.VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
             .pNext = null,
             .flags = 0,
@@ -1174,8 +1157,10 @@ const Application = struct {
             .depthBiasSlopeFactor = 0.0,
             .lineWidth = 1.0,
         };
+    }
 
-        const multisampling = vulkan.VkPipelineMultisampleStateCreateInfo{
+    fn initialize_vulkan_create_graphics_pipeline_multisample_state() vulkan.VkPipelineMultisampleStateCreateInfo {
+        return .{
             .sType = vulkan.VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
             .pNext = null,
             .flags = 0,
@@ -1186,8 +1171,10 @@ const Application = struct {
             .alphaToCoverageEnable = vulkan.VK_FALSE,
             .alphaToOneEnable = vulkan.VK_FALSE,
         };
+    }
 
-        const color_blend_attachment = vulkan.VkPipelineColorBlendAttachmentState{
+    fn initialize_vulkan_create_graphics_pipeline_color_blend_attachment() vulkan.VkPipelineColorBlendAttachmentState {
+        return .{
             .blendEnable = vulkan.VK_FALSE,
             .srcColorBlendFactor = vulkan.VK_BLEND_FACTOR_ONE,
             .dstColorBlendFactor = vulkan.VK_BLEND_FACTOR_ZERO,
@@ -1200,64 +1187,139 @@ const Application = struct {
                 vulkan.VK_COLOR_COMPONENT_B_BIT |
                 vulkan.VK_COLOR_COMPONENT_A_BIT,
         };
+    }
 
-        const color_blending = vulkan.VkPipelineColorBlendStateCreateInfo{
+    fn initialize_vulkan_create_graphics_pipeline_color_blend_state(
+        attachment: *const vulkan.VkPipelineColorBlendAttachmentState,
+    ) vulkan.VkPipelineColorBlendStateCreateInfo {
+        return .{
             .sType = vulkan.VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
             .pNext = null,
             .flags = 0,
             .logicOpEnable = vulkan.VK_FALSE,
             .logicOp = vulkan.VK_LOGIC_OP_COPY,
             .attachmentCount = 1,
-            .pAttachments = &color_blend_attachment,
+            .pAttachments = attachment,
             .blendConstants = .{ 0.0, 0.0, 0.0, 0.0 },
         };
+    }
 
-        const dynamic_states = [_]vulkan.VkDynamicState{
-            vulkan.VK_DYNAMIC_STATE_VIEWPORT,
-            vulkan.VK_DYNAMIC_STATE_SCISSOR,
-        };
-
-        const dynamic_state = vulkan.VkPipelineDynamicStateCreateInfo{
+    fn initialize_vulkan_create_graphics_pipeline_dynamic_state(
+        dynamic_states: []const vulkan.VkDynamicState,
+    ) vulkan.VkPipelineDynamicStateCreateInfo {
+        return .{
             .sType = vulkan.VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
             .pNext = null,
             .flags = 0,
             .dynamicStateCount = @intCast(dynamic_states.len),
-            .pDynamicStates = &dynamic_states,
+            .pDynamicStates = dynamic_states.ptr,
         };
+    }
 
-        var color_format = self.swap_chain_surface_format.format;
-
-        const rendering_information = vulkan.VkPipelineRenderingCreateInfo{
+    fn initialize_vulkan_create_graphics_pipeline_rendering_information(
+        color_format: *const vulkan.VkFormat,
+    ) vulkan.VkPipelineRenderingCreateInfo {
+        return .{
             .sType = vulkan.VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO,
             .pNext = null,
             .viewMask = 0,
             .colorAttachmentCount = 1,
-            .pColorAttachmentFormats = &color_format,
+            .pColorAttachmentFormats = color_format,
             .depthAttachmentFormat = vulkan.VK_FORMAT_UNDEFINED,
             .stencilAttachmentFormat = vulkan.VK_FORMAT_UNDEFINED,
         };
+    }
 
-        const pipeline_create_information = vulkan.VkGraphicsPipelineCreateInfo{
+    fn initialize_vulkan_create_graphics_pipeline_create_information(
+        rendering_information: *const vulkan.VkPipelineRenderingCreateInfo,
+        shader_stages: []const vulkan.VkPipelineShaderStageCreateInfo,
+        vertex_input: *const vulkan.VkPipelineVertexInputStateCreateInfo,
+        input_assembly: *const vulkan.VkPipelineInputAssemblyStateCreateInfo,
+        viewport_state: *const vulkan.VkPipelineViewportStateCreateInfo,
+        rasterizer: *const vulkan.VkPipelineRasterizationStateCreateInfo,
+        multisampling: *const vulkan.VkPipelineMultisampleStateCreateInfo,
+        color_blending: *const vulkan.VkPipelineColorBlendStateCreateInfo,
+        dynamic_state: *const vulkan.VkPipelineDynamicStateCreateInfo,
+        layout: vulkan.VkPipelineLayout,
+    ) vulkan.VkGraphicsPipelineCreateInfo {
+        return .{
             .sType = vulkan.VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
-            .pNext = &rendering_information,
+            .pNext = rendering_information,
             .flags = 0,
             .stageCount = @intCast(shader_stages.len),
-            .pStages = &shader_stages,
-            .pVertexInputState = &vertex_input,
-            .pInputAssemblyState = &input_assembly,
+            .pStages = shader_stages.ptr,
+            .pVertexInputState = vertex_input,
+            .pInputAssemblyState = input_assembly,
             .pTessellationState = null,
-            .pViewportState = &viewport_state,
-            .pRasterizationState = &rasterizer,
-            .pMultisampleState = &multisampling,
+            .pViewportState = viewport_state,
+            .pRasterizationState = rasterizer,
+            .pMultisampleState = multisampling,
             .pDepthStencilState = null,
-            .pColorBlendState = &color_blending,
-            .pDynamicState = &dynamic_state,
-            .layout = self.pipeline_layout,
+            .pColorBlendState = color_blending,
+            .pDynamicState = dynamic_state,
+            .layout = layout,
             .renderPass = null,
             .subpass = 0,
             .basePipelineHandle = null,
             .basePipelineIndex = -1,
         };
+    }
+
+    fn initialize_vulkan_create_graphics_pipeline(self: *Application) !void {
+        std.debug.assert(self.device != null);
+        std.debug.assert(self.shader_module != null);
+        std.debug.assert(self.pipeline_layout != null);
+        std.debug.assert(self.graphics_pipeline == null);
+        if (self.device == null) return error.DeviceNotCreated;
+        if (self.shader_module == null) return error.ShaderModuleNotCreated;
+        if (self.pipeline_layout == null) return error.PipelineLayoutNotCreated;
+        if (self.graphics_pipeline != null) return error.GraphicsPipelineAlreadyCreated;
+
+        const shader_stages = try self.initialize_vulkan_create_graphics_pipeline_create_shader_stages();
+        const vertex_input = initialize_vulkan_create_graphics_pipeline_vertex_input_state();
+        const input_assembly = initialize_vulkan_create_graphics_pipeline_input_assembly_state();
+
+        const viewport = vulkan.VkViewport{
+            .x = 0.0,
+            .y = 0.0,
+            .width = @floatFromInt(self.swap_chain_extent.width),
+            .height = @floatFromInt(self.swap_chain_extent.height),
+            .minDepth = 0.0,
+            .maxDepth = 1.0,
+        };
+        const scissor = vulkan.VkRect2D{
+            .offset = .{ .x = 0, .y = 0 },
+            .extent = self.swap_chain_extent,
+        };
+
+        const viewport_state = initialize_vulkan_create_graphics_pipeline_viewport_state(&viewport, &scissor);
+        const rasterizer = initialize_vulkan_create_graphics_pipeline_rasterization_state();
+        const multisampling = initialize_vulkan_create_graphics_pipeline_multisample_state();
+
+        const color_blend_attachment = initialize_vulkan_create_graphics_pipeline_color_blend_attachment();
+        const color_blending = initialize_vulkan_create_graphics_pipeline_color_blend_state(&color_blend_attachment);
+
+        const dynamic_states = [_]vulkan.VkDynamicState{
+            vulkan.VK_DYNAMIC_STATE_VIEWPORT,
+            vulkan.VK_DYNAMIC_STATE_SCISSOR,
+        };
+        const dynamic_state = initialize_vulkan_create_graphics_pipeline_dynamic_state(&dynamic_states);
+
+        var color_format = self.swap_chain_surface_format.format;
+        const rendering_information = initialize_vulkan_create_graphics_pipeline_rendering_information(&color_format);
+
+        const pipeline_create_information = initialize_vulkan_create_graphics_pipeline_create_information(
+            &rendering_information,
+            &shader_stages,
+            &vertex_input,
+            &input_assembly,
+            &viewport_state,
+            &rasterizer,
+            &multisampling,
+            &color_blending,
+            &dynamic_state,
+            self.pipeline_layout,
+        );
 
         try vulkan_check(
             vulkan.vkCreateGraphicsPipelines(
@@ -1270,7 +1332,6 @@ const Application = struct {
             ),
             error.FailedToCreateGraphicsPipeline,
         );
-
         std.log.info("Created Vulkan graphics pipeline", .{});
     }
 
@@ -1540,93 +1601,10 @@ const Application = struct {
         );
     }
 
-    fn record_command_buffer(
+    fn record_command_buffer_draw_commands(
         self: *Application,
         command_buffer: vulkan.VkCommandBuffer,
-        image_index: u32,
-    ) !void {
-        std.debug.assert(command_buffer != null);
-        std.debug.assert(image_index < self.swap_chain_images.len);
-        std.debug.assert(image_index < self.swap_chain_image_views.len);
-        if (self.graphics_pipeline == null) {
-            return error.GraphicsPipelineNotCreated;
-        }
-
-        if (image_index >= self.swap_chain_images.len) {
-            return error.SwapChainImageIndexOutOfRange;
-        }
-
-        if (image_index >= self.swap_chain_image_views.len) {
-            return error.SwapChainImageViewIndexOutOfRange;
-        }
-
-        const begin_information = vulkan.VkCommandBufferBeginInfo{
-            .sType = vulkan.VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
-            .pNext = null,
-            .flags = 0,
-            .pInheritanceInfo = null,
-        };
-
-        try vulkan_check(vulkan.vkBeginCommandBuffer(command_buffer, &begin_information), error.FailedToBeginCommandBuffer);
-
-        errdefer {
-            _ = vulkan.vkEndCommandBuffer(command_buffer);
-        }
-
-        try self.transition_image_layout(
-            command_buffer,
-            image_index,
-            vulkan.VK_IMAGE_LAYOUT_UNDEFINED,
-            vulkan.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-            0,
-            vulkan.VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
-            0,
-            vulkan.VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
-        );
-
-        const clear_value = vulkan.VkClearValue{
-            .color = .{
-                .float32 = .{ 0.0, 0.0, 0.0, 1.0 },
-            },
-        };
-
-        const attachment_information = vulkan.VkRenderingAttachmentInfo{
-            .sType = vulkan.VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
-            .pNext = null,
-            .imageView = self.swap_chain_image_views[image_index],
-            .imageLayout = vulkan.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-            .resolveMode = vulkan.VK_RESOLVE_MODE_NONE,
-            .resolveImageView = null,
-            .resolveImageLayout = vulkan.VK_IMAGE_LAYOUT_UNDEFINED,
-            .loadOp = vulkan.VK_ATTACHMENT_LOAD_OP_CLEAR,
-            .storeOp = vulkan.VK_ATTACHMENT_STORE_OP_STORE,
-            .clearValue = clear_value,
-        };
-
-        const rendering_information = vulkan.VkRenderingInfo{
-            .sType = vulkan.VK_STRUCTURE_TYPE_RENDERING_INFO,
-            .pNext = null,
-            .flags = 0,
-            .renderArea = .{
-                .offset = .{
-                    .x = 0,
-                    .y = 0,
-                },
-                .extent = self.swap_chain_extent,
-            },
-            .layerCount = 1,
-            .viewMask = 0,
-            .colorAttachmentCount = 1,
-            .pColorAttachments = &attachment_information,
-            .pDepthAttachment = null,
-            .pStencilAttachment = null,
-        };
-
-        vulkan.vkCmdBeginRendering(
-            command_buffer,
-            &rendering_information,
-        );
-
+    ) void {
         vulkan.vkCmdBindPipeline(
             command_buffer,
             vulkan.VK_PIPELINE_BIND_POINT_GRAPHICS,
@@ -1671,7 +1649,89 @@ const Application = struct {
             0,
             0,
         );
+    }
 
+    fn record_command_buffer_rendering_information(
+        view: vulkan.VkImageView,
+        extent: vulkan.VkExtent2D,
+        attachment_information: *vulkan.VkRenderingAttachmentInfo,
+    ) vulkan.VkRenderingInfo {
+        attachment_information.* = .{
+            .sType = vulkan.VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO,
+            .pNext = null,
+            .imageView = view,
+            .imageLayout = vulkan.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            .resolveMode = vulkan.VK_RESOLVE_MODE_NONE,
+            .resolveImageView = null,
+            .resolveImageLayout = vulkan.VK_IMAGE_LAYOUT_UNDEFINED,
+            .loadOp = vulkan.VK_ATTACHMENT_LOAD_OP_CLEAR,
+            .storeOp = vulkan.VK_ATTACHMENT_STORE_OP_STORE,
+            .clearValue = .{
+                .color = .{
+                    .float32 = .{ 0.0, 0.0, 0.0, 1.0 },
+                },
+            },
+        };
+
+        return .{
+            .sType = vulkan.VK_STRUCTURE_TYPE_RENDERING_INFO,
+            .pNext = null,
+            .flags = 0,
+            .renderArea = .{
+                .offset = .{ .x = 0, .y = 0 },
+                .extent = extent,
+            },
+            .layerCount = 1,
+            .viewMask = 0,
+            .colorAttachmentCount = 1,
+            .pColorAttachments = attachment_information,
+            .pDepthAttachment = null,
+            .pStencilAttachment = null,
+        };
+    }
+
+    fn record_command_buffer(
+        self: *Application,
+        command_buffer: vulkan.VkCommandBuffer,
+        image_index: u32,
+    ) !void {
+        std.debug.assert(command_buffer != null);
+        std.debug.assert(image_index < self.swap_chain_images.len);
+        std.debug.assert(image_index < self.swap_chain_image_views.len);
+        if (self.graphics_pipeline == null) return error.GraphicsPipelineNotCreated;
+        if (image_index >= self.swap_chain_images.len) return error.SwapChainImageIndexOutOfRange;
+        if (image_index >= self.swap_chain_image_views.len) return error.SwapChainImageViewIndexOutOfRange;
+
+        const begin_information = vulkan.VkCommandBufferBeginInfo{
+            .sType = vulkan.VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+            .pNext = null,
+            .flags = 0,
+            .pInheritanceInfo = null,
+        };
+
+        try vulkan_check(vulkan.vkBeginCommandBuffer(command_buffer, &begin_information), error.FailedToBeginCommandBuffer);
+        errdefer _ = vulkan.vkEndCommandBuffer(command_buffer);
+
+        try self.transition_image_layout(
+            command_buffer,
+            image_index,
+            vulkan.VK_IMAGE_LAYOUT_UNDEFINED,
+            vulkan.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            0,
+            vulkan.VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
+            0,
+            vulkan.VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT,
+        );
+
+        var attachment_information: vulkan.VkRenderingAttachmentInfo = undefined;
+        const rendering_information = record_command_buffer_rendering_information(
+            self.swap_chain_image_views[image_index],
+            self.swap_chain_extent,
+            &attachment_information,
+        );
+
+        vulkan.vkCmdBeginRendering(command_buffer, &rendering_information);
+        self.record_command_buffer_draw_commands(command_buffer);
         vulkan.vkCmdEndRendering(command_buffer);
 
         try self.transition_image_layout(
@@ -1686,11 +1746,6 @@ const Application = struct {
         );
 
         try vulkan_check(vulkan.vkEndCommandBuffer(command_buffer), error.FailedToEndCommandBuffer);
-
-        // Uncomment if you want to see this debug message (very spammy).
-        // Std.log.debug("Recorded command buffer for swap-chain image {d}", .{.
-        // Image_index,.
-        // });
     }
 
     fn cleanup_destroy_command_buffers(self: *Application) void {
@@ -1716,66 +1771,10 @@ const Application = struct {
     // |  Synchronization  |
     // +-------------------+
 
-    fn initialize_vulkan_create_synchronization_objects(self: *Application) !void {
-        std.debug.assert(self.device != null);
-        std.debug.assert(self.swap_chain_images.len > 0);
-        std.debug.assert(self.present_complete_semaphores.len == 0);
-        std.debug.assert(self.render_finished_semaphores.len == 0);
-        std.debug.assert(self.in_flight_fences.len == 0);
-        if (self.device == null) {
-            return error.DeviceNotCreated;
-        }
-
-        if (self.swap_chain_images.len == 0) {
-            return error.NoSwapChainImages;
-        }
-
-        if (self.present_complete_semaphores.len != 0 or
-            self.render_finished_semaphores.len != 0 or
-            self.in_flight_fences.len != 0)
-        {
-            return error.SyncObjectsAlreadyCreated;
-        }
-
-        self.present_complete_semaphores = try self.allocator.alloc(
-            vulkan.VkSemaphore,
-            frames_in_flight_max,
-        );
-        errdefer {
-            self.allocator.free(self.present_complete_semaphores);
-            self.present_complete_semaphores = &.{};
-        }
-
-        self.render_finished_semaphores = try self.allocator.alloc(
-            vulkan.VkSemaphore,
-            self.swap_chain_images.len,
-        );
-        errdefer {
-            self.allocator.free(self.render_finished_semaphores);
-            self.render_finished_semaphores = &.{};
-        }
-
-        self.in_flight_fences = try self.allocator.alloc(
-            vulkan.VkFence,
-            frames_in_flight_max,
-        );
-        errdefer {
-            self.allocator.free(self.in_flight_fences);
-            self.in_flight_fences = &.{};
-        }
-
-        const semaphore_information = vulkan.VkSemaphoreCreateInfo{
-            .sType = vulkan.VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
-            .pNext = null,
-            .flags = 0,
-        };
-
-        const fence_information = vulkan.VkFenceCreateInfo{
-            .sType = vulkan.VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
-            .pNext = null,
-            .flags = vulkan.VK_FENCE_CREATE_SIGNALED_BIT,
-        };
-
+    fn initialize_vulkan_create_synchronization_objects_semaphores(
+        self: *Application,
+        semaphore_information: *const vulkan.VkSemaphoreCreateInfo,
+    ) !void {
         var created_present_complete: u32 = 0;
         errdefer {
             while (created_present_complete > 0) {
@@ -1800,6 +1799,35 @@ const Application = struct {
             }
         }
 
+        while (created_present_complete < frames_in_flight_max) : (created_present_complete += 1) {
+            try vulkan_check(
+                vulkan.vkCreateSemaphore(
+                    self.device,
+                    semaphore_information,
+                    null,
+                    &self.present_complete_semaphores[created_present_complete],
+                ),
+                error.FailedToCreateAcquireSemaphore,
+            );
+        }
+
+        while (created_render_finished < self.swap_chain_images.len) : (created_render_finished += 1) {
+            try vulkan_check(
+                vulkan.vkCreateSemaphore(
+                    self.device,
+                    semaphore_information,
+                    null,
+                    &self.render_finished_semaphores[created_render_finished],
+                ),
+                error.FailedToCreateRenderFinishedSemaphore,
+            );
+        }
+    }
+
+    fn initialize_vulkan_create_synchronization_objects_fences(
+        self: *Application,
+        fence_information: *const vulkan.VkFenceCreateInfo,
+    ) !void {
         var created_fences: u32 = 0;
         errdefer {
             while (created_fences > 0) {
@@ -1812,41 +1840,63 @@ const Application = struct {
             }
         }
 
-        while (created_present_complete < frames_in_flight_max) : (created_present_complete += 1) {
-            try vulkan_check(
-                vulkan.vkCreateSemaphore(
-                    self.device,
-                    &semaphore_information,
-                    null,
-                    &self.present_complete_semaphores[created_present_complete],
-                ),
-                error.FailedToCreateAcquireSemaphore,
-            );
-        }
-
-        while (created_render_finished < self.swap_chain_images.len) : (created_render_finished += 1) {
-            try vulkan_check(
-                vulkan.vkCreateSemaphore(
-                    self.device,
-                    &semaphore_information,
-                    null,
-                    &self.render_finished_semaphores[created_render_finished],
-                ),
-                error.FailedToCreateRenderFinishedSemaphore,
-            );
-        }
-
         while (created_fences < frames_in_flight_max) : (created_fences += 1) {
             try vulkan_check(
                 vulkan.vkCreateFence(
                     self.device,
-                    &fence_information,
+                    fence_information,
                     null,
                     &self.in_flight_fences[created_fences],
                 ),
                 error.FailedToCreateInFlightFence,
             );
         }
+    }
+
+    fn initialize_vulkan_create_synchronization_objects(self: *Application) !void {
+        std.debug.assert(self.device != null);
+        std.debug.assert(self.swap_chain_images.len > 0);
+        std.debug.assert(self.present_complete_semaphores.len == 0);
+        std.debug.assert(self.render_finished_semaphores.len == 0);
+        std.debug.assert(self.in_flight_fences.len == 0);
+        if (self.device == null) return error.DeviceNotCreated;
+        if (self.swap_chain_images.len == 0) return error.NoSwapChainImages;
+        if (self.present_complete_semaphores.len != 0 or
+            self.render_finished_semaphores.len != 0 or
+            self.in_flight_fences.len != 0)
+        {
+            return error.SyncObjectsAlreadyCreated;
+        }
+
+        self.present_complete_semaphores = try self.allocator.alloc(vulkan.VkSemaphore, frames_in_flight_max);
+        errdefer {
+            self.allocator.free(self.present_complete_semaphores);
+            self.present_complete_semaphores = &.{};
+        }
+        self.render_finished_semaphores = try self.allocator.alloc(vulkan.VkSemaphore, self.swap_chain_images.len);
+        errdefer {
+            self.allocator.free(self.render_finished_semaphores);
+            self.render_finished_semaphores = &.{};
+        }
+        self.in_flight_fences = try self.allocator.alloc(vulkan.VkFence, frames_in_flight_max);
+        errdefer {
+            self.allocator.free(self.in_flight_fences);
+            self.in_flight_fences = &.{};
+        }
+
+        const semaphore_information = vulkan.VkSemaphoreCreateInfo{
+            .sType = vulkan.VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+            .pNext = null,
+            .flags = 0,
+        };
+        const fence_information = vulkan.VkFenceCreateInfo{
+            .sType = vulkan.VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+            .pNext = null,
+            .flags = vulkan.VK_FENCE_CREATE_SIGNALED_BIT,
+        };
+
+        try self.initialize_vulkan_create_synchronization_objects_semaphores(&semaphore_information);
+        try self.initialize_vulkan_create_synchronization_objects_fences(&fence_information);
 
         std.log.debug(
             "Created synchronization objects for {d} frames and {d} swap-chain images",
@@ -1857,7 +1907,7 @@ const Application = struct {
         );
     }
 
-    fn draw_frame(self: *Application) !void {
+    fn draw_frame_check_resources_ready(self: *Application) !void {
         std.debug.assert(self.device != null);
         std.debug.assert(self.graphics_queue != null);
         std.debug.assert(self.swap_chain != null);
@@ -1865,33 +1915,48 @@ const Application = struct {
         std.debug.assert(self.present_complete_semaphores.len == frames_in_flight_max);
         std.debug.assert(self.in_flight_fences.len == frames_in_flight_max);
         std.debug.assert(self.render_finished_semaphores.len == self.swap_chain_images.len);
-        if (self.device == null) {
-            return error.DeviceNotCreated;
-        }
 
-        if (self.graphics_queue == null) {
-            return error.GraphicsQueueNotCreated;
-        }
+        if (self.device == null) return error.DeviceNotCreated;
+        if (self.graphics_queue == null) return error.GraphicsQueueNotCreated;
+        if (self.swap_chain == null) return error.SwapChainNotCreated;
+        if (self.command_buffers.len != frames_in_flight_max) return error.CommandBuffersNotReady;
+        if (self.present_complete_semaphores.len != frames_in_flight_max) return error.AcquireSemaphoresNotReady;
+        if (self.in_flight_fences.len != frames_in_flight_max) return error.InFlightFencesNotReady;
+        if (self.render_finished_semaphores.len != self.swap_chain_images.len) return error.RenderFinishedSemaphoresNotReady;
+    }
 
-        if (self.swap_chain == null) {
-            return error.SwapChainNotCreated;
-        }
+    fn draw_frame_submit_command_buffer(
+        self: *Application,
+        frame_index: u32,
+        image_index: u32,
+    ) !void {
+        const wait_stage: vulkan.VkPipelineStageFlags = vulkan.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
 
-        if (self.command_buffers.len != frames_in_flight_max) {
-            return error.CommandBuffersNotReady;
-        }
+        const submit_information = vulkan.VkSubmitInfo{
+            .sType = vulkan.VK_STRUCTURE_TYPE_SUBMIT_INFO,
+            .pNext = null,
+            .waitSemaphoreCount = 1,
+            .pWaitSemaphores = &self.present_complete_semaphores[frame_index],
+            .pWaitDstStageMask = &wait_stage,
+            .commandBufferCount = 1,
+            .pCommandBuffers = &self.command_buffers[frame_index],
+            .signalSemaphoreCount = 1,
+            .pSignalSemaphores = &self.render_finished_semaphores[image_index],
+        };
 
-        if (self.present_complete_semaphores.len != frames_in_flight_max) {
-            return error.AcquireSemaphoresNotReady;
-        }
+        try vulkan_check(
+            vulkan.vkQueueSubmit(
+                self.graphics_queue,
+                1,
+                &submit_information,
+                self.in_flight_fences[frame_index],
+            ),
+            error.FailedToSubmitFrame,
+        );
+    }
 
-        if (self.in_flight_fences.len != frames_in_flight_max) {
-            return error.InFlightFencesNotReady;
-        }
-
-        if (self.render_finished_semaphores.len != self.swap_chain_images.len) {
-            return error.RenderFinishedSemaphoresNotReady;
-        }
+    fn draw_frame(self: *Application) !void {
+        try self.draw_frame_check_resources_ready();
 
         const frame_index = self.frame_index;
 
@@ -1916,13 +1981,8 @@ const Application = struct {
             self.present_complete_semaphores[frame_index],
         )) orelse return;
 
-        if (image_index >= self.swap_chain_images.len) {
-            return error.AcquiredImageIndexOutOfBounds;
-        }
-
-        if (image_index >= self.render_finished_semaphores.len) {
-            return error.RenderFinishedSemaphoreIndexOutOfBounds;
-        }
+        if (image_index >= self.swap_chain_images.len) return error.AcquiredImageIndexOutOfBounds;
+        if (image_index >= self.render_finished_semaphores.len) return error.RenderFinishedSemaphoreIndexOutOfBounds;
 
         // Reset the fence before submitting command buffers to the queue.
         // This moves the fence back into an unsignaled state so we can wait on it in the next loop.
@@ -1932,45 +1992,15 @@ const Application = struct {
         // Resetting is much more efficient than destroying and re-allocating command buffers.
         try vulkan_check(vulkan.vkResetCommandBuffer(self.command_buffers[frame_index], 0), error.FailedToResetCommandBuffer);
 
-        try self.record_command_buffer(
-            self.command_buffers[frame_index],
-            image_index,
-        );
+        try self.record_command_buffer(self.command_buffers[frame_index], image_index);
 
-        // Submit the command buffer.
-        const wait_stage: vulkan.VkPipelineStageFlags = vulkan.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-
-        const submit_information = vulkan.VkSubmitInfo{
-            .sType = vulkan.VK_STRUCTURE_TYPE_SUBMIT_INFO,
-            .pNext = null,
-            .waitSemaphoreCount = 1,
-            .pWaitSemaphores = &self.present_complete_semaphores[frame_index],
-            .pWaitDstStageMask = &wait_stage,
-            .commandBufferCount = 1,
-            .pCommandBuffers = &self.command_buffers[frame_index],
-            .signalSemaphoreCount = 1,
-            .pSignalSemaphores = &self.render_finished_semaphores[image_index],
-        };
-
-        try vulkan_check(
-            vulkan.vkQueueSubmit(
-                self.graphics_queue,
-                1,
-                &submit_information,
-                self.in_flight_fences[frame_index],
-            ),
-            error.FailedToSubmitFrame,
-        );
+        try self.draw_frame_submit_command_buffer(frame_index, image_index);
 
         // Present the rendered image (may trigger recreation).
-        try self.present_swap_chain_image(
-            self.render_finished_semaphores[image_index],
-            image_index,
-        );
+        try self.present_swap_chain_image(self.render_finished_semaphores[image_index], image_index);
 
         // Advance to the next frame slot.
-        self.frame_index =
-            (self.frame_index + 1) % frames_in_flight_max;
+        self.frame_index = (self.frame_index + 1) % frames_in_flight_max;
     }
 
     fn cleanup_destroy_synchronization_objects(self: *Application) void {
