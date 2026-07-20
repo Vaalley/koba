@@ -1,3 +1,9 @@
+//! Koba is a Vulkan rendering engine built with SDL3 on Zig.
+//! This application manages double-buffered rendering using a standard frames-in-flight pattern
+//! to ensure that the CPU can record commands for a future frame while the GPU executes a past one.
+//! Static resource allocations are handled at startup, and explicit assertions are used as
+//! executable documentation to guarantee lifecycle pre/postconditions.
+
 const std = @import("std");
 const builtin = @import("builtin");
 const sdl = @import("sdl3");
@@ -68,6 +74,7 @@ const Application = struct {
     }
 
     fn initialize_window(self: *Application) !void {
+        std.debug.assert(self.window == null);
         if (!sdl.SDL_Init(sdl.SDL_INIT_VIDEO)) {
             std.log.err("SDL Initialization Failed: {s}", .{sdl.SDL_GetError()});
             return error.SDLInitFailed;
@@ -82,47 +89,64 @@ const Application = struct {
             std.log.err("Window Creation Failed: {s}", .{sdl.SDL_GetError()});
             return error.WindowCreationFailed;
         };
+
+        std.debug.assert(self.window != null);
     }
 
     fn initialize_vulkan(self: *Application) !void {
+        std.debug.assert(self.instance == null);
+        std.debug.assert(self.device == null);
+        std.debug.assert(self.surface == null);
         std.log.debug("Creating instance...", .{});
         try self.initialize_vulkan_create_instance();
+        std.debug.assert(self.instance != null);
 
         std.log.debug("Setting up debug messenger...", .{});
         try self.initialize_vulkan_setup_debug_messenger();
 
         std.log.debug("Creating window surface...", .{});
         try self.initialize_vulkan_create_surface();
+        std.debug.assert(self.surface != null);
 
         std.log.debug("Picking physical device...", .{});
         try self.initialize_vulkan_pick_physical_device();
+        std.debug.assert(self.physical_device != null);
 
         std.log.debug("Creating logical device...", .{});
         try self.initialize_vulkan_create_logical_device();
+        std.debug.assert(self.device != null);
 
         std.log.debug("Creating swap chain...", .{});
         try self.create_swap_chain();
+        std.debug.assert(self.swap_chain != null);
 
         std.log.debug("Creating image views...", .{});
         try self.create_image_views();
+        std.debug.assert(self.swap_chain_image_views.len > 0);
 
         std.log.debug("Creating shader modules...", .{});
         try self.initialize_vulkan_create_graphics_pipeline_create_shader_modules();
+        std.debug.assert(self.shader_module != null);
 
         std.log.debug("Creating pipeline layout...", .{});
         try self.initialize_vulkan_create_pipeline_layout();
+        std.debug.assert(self.pipeline_layout != null);
 
         std.log.debug("Creating graphics pipeline...", .{});
         try self.initialize_vulkan_create_graphics_pipeline();
+        std.debug.assert(self.graphics_pipeline != null);
 
         std.log.debug("Creating command pool...", .{});
         try self.initialize_vulkan_create_command_pool();
+        std.debug.assert(self.command_pool != null);
 
         std.log.debug("Creating command buffers...", .{});
         try self.initialize_vulkan_create_command_buffers();
+        std.debug.assert(self.command_buffers.len == frames_in_flight_max);
 
         std.log.debug("Creating synchronization objects...", .{});
         try self.initialize_vulkan_create_synchronization_objects();
+        std.debug.assert(self.present_complete_semaphores.len == frames_in_flight_max);
 
         std.log.info("Vulkan initialization complete", .{});
     }
@@ -156,11 +180,13 @@ const Application = struct {
             running = self.poll_events();
             if (!running) break;
 
-            try self.drawFrame();
+            try self.draw_frame();
             frames_per_second.tick(self.window);
         }
 
         if (self.device != null) {
+            // Wait for the GPU to completely finish all execution before starting cleanup.
+            // This is required to prevent destroying active queues or buffers currently in use.
             try vulkan_check(vulkan.vkDeviceWaitIdle(self.device), error.FailedToWaitForDeviceIdle);
         }
     }
@@ -215,6 +241,7 @@ const Application = struct {
     // +------------------+
 
     fn initialize_vulkan_create_instance(self: *Application) !void {
+        std.debug.assert(self.instance == null);
         if (enable_validation_layers) {
             const supported = try check_validation_layer_support(self);
             if (!supported) {
@@ -338,6 +365,9 @@ const Application = struct {
 
     fn initialize_vulkan_setup_debug_messenger(self: *Application) !void {
         if (!enable_validation_layers) return;
+        std.debug.assert(self.instance != null);
+        std.debug.assert(self.debug_messenger == null);
+        if (!enable_validation_layers) return;
 
         const create_information = vulkan.VkDebugUtilsMessengerCreateInfoEXT{
             .sType = vulkan.VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
@@ -383,6 +413,9 @@ const Application = struct {
     // +------------------+
 
     fn initialize_vulkan_create_surface(self: *Application) !void {
+        std.debug.assert(self.instance != null);
+        std.debug.assert(self.window != null);
+        std.debug.assert(self.surface == null);
         if (!sdl.SDL_Vulkan_CreateSurface(
             self.window,
             @ptrCast(self.instance),
@@ -401,6 +434,8 @@ const Application = struct {
     // +-----------------------------+
 
     fn initialize_vulkan_pick_physical_device(self: *Application) !void {
+        std.debug.assert(self.instance != null);
+        std.debug.assert(self.physical_device == null);
         const physical_devices = try vulkan_enumerate(
             self.allocator,
             vulkan.VkPhysicalDevice,
@@ -431,6 +466,7 @@ const Application = struct {
     }
 
     fn is_device_suitable(self: *Application, physical_device: vulkan.VkPhysicalDevice) !bool {
+        std.debug.assert(physical_device != null);
         var properties: vulkan.VkPhysicalDeviceProperties = undefined;
         vulkan.vkGetPhysicalDeviceProperties(physical_device, &properties);
         var features: vulkan.VkPhysicalDeviceFeatures = undefined;
@@ -475,6 +511,7 @@ const Application = struct {
     }
 
     fn check_device_extension_support(self: *Application, physical_device: vulkan.VkPhysicalDevice) !bool {
+        std.debug.assert(physical_device != null);
         const available = try vulkan_enumerate(
             self.allocator,
             vulkan.VkExtensionProperties,
@@ -503,6 +540,8 @@ const Application = struct {
     // +----------------------------+
 
     fn initialize_vulkan_create_logical_device(self: *Application) !void {
+        std.debug.assert(self.physical_device != null);
+        std.debug.assert(self.device == null);
         const families = try vulkan_enumerate(
             self.allocator,
             vulkan.VkQueueFamilyProperties,
@@ -678,6 +717,9 @@ const Application = struct {
     }
 
     fn create_swap_chain(self: *Application) !void {
+        std.debug.assert(self.device != null);
+        std.debug.assert(self.surface != null);
+        std.debug.assert(self.swap_chain == null);
         const capabilities = try self.query_surface_capabilities();
 
         const formats = try self.query_surface_formats();
@@ -749,6 +791,9 @@ const Application = struct {
     }
 
     fn create_image_views(self: *Application) !void {
+        std.debug.assert(self.device != null);
+        std.debug.assert(self.swap_chain_images.len > 0);
+        std.debug.assert(self.swap_chain_image_views.len == 0);
         if (self.swap_chain_images.len == 0) {
             return error.NoSwapChainImages;
         }
@@ -813,6 +858,7 @@ const Application = struct {
     }
 
     fn cleanup_swap_chain_destroy_image_views(self: *Application) void {
+        std.debug.assert(self.device != null);
         for (self.swap_chain_image_views) |image_view| {
             vulkan.vkDestroyImageView(self.device, image_view, null);
         }
@@ -1001,6 +1047,8 @@ const Application = struct {
     // +---------------------+
 
     fn initialize_vulkan_create_pipeline_layout(self: *Application) !void {
+        std.debug.assert(self.device != null);
+        std.debug.assert(self.pipeline_layout == null);
         if (self.device == null) {
             return error.DeviceNotCreated;
         }
@@ -1025,6 +1073,10 @@ const Application = struct {
     }
 
     fn initialize_vulkan_create_graphics_pipeline(self: *Application) !void {
+        std.debug.assert(self.device != null);
+        std.debug.assert(self.shader_module != null);
+        std.debug.assert(self.pipeline_layout != null);
+        std.debug.assert(self.graphics_pipeline == null);
         if (self.device == null) {
             return error.DeviceNotCreated;
         }
@@ -1367,6 +1419,8 @@ const Application = struct {
     // +------------------+
 
     fn initialize_vulkan_create_command_pool(self: *Application) !void {
+        std.debug.assert(self.device != null);
+        std.debug.assert(self.command_pool == null);
         if (self.device == null) {
             return error.DeviceNotCreated;
         }
@@ -1388,6 +1442,9 @@ const Application = struct {
     }
 
     fn initialize_vulkan_create_command_buffers(self: *Application) !void {
+        std.debug.assert(self.device != null);
+        std.debug.assert(self.command_pool != null);
+        std.debug.assert(self.command_buffers.len == 0);
         if (self.device == null) {
             return error.DeviceNotCreated;
         }
@@ -1436,6 +1493,8 @@ const Application = struct {
         source_stage_mask: vulkan.VkPipelineStageFlags2,
         target_stage_mask: vulkan.VkPipelineStageFlags2,
     ) !void {
+        std.debug.assert(command_buffer != null);
+        std.debug.assert(image_index < self.swap_chain_images.len);
         const index = image_index;
 
         if (index >= self.swap_chain_images.len) {
@@ -1486,6 +1545,9 @@ const Application = struct {
         command_buffer: vulkan.VkCommandBuffer,
         image_index: u32,
     ) !void {
+        std.debug.assert(command_buffer != null);
+        std.debug.assert(image_index < self.swap_chain_images.len);
+        std.debug.assert(image_index < self.swap_chain_image_views.len);
         if (self.graphics_pipeline == null) {
             return error.GraphicsPipelineNotCreated;
         }
@@ -1655,6 +1717,11 @@ const Application = struct {
     // +-------------------+
 
     fn initialize_vulkan_create_synchronization_objects(self: *Application) !void {
+        std.debug.assert(self.device != null);
+        std.debug.assert(self.swap_chain_images.len > 0);
+        std.debug.assert(self.present_complete_semaphores.len == 0);
+        std.debug.assert(self.render_finished_semaphores.len == 0);
+        std.debug.assert(self.in_flight_fences.len == 0);
         if (self.device == null) {
             return error.DeviceNotCreated;
         }
@@ -1790,7 +1857,14 @@ const Application = struct {
         );
     }
 
-    fn drawFrame(self: *Application) !void {
+    fn draw_frame(self: *Application) !void {
+        std.debug.assert(self.device != null);
+        std.debug.assert(self.graphics_queue != null);
+        std.debug.assert(self.swap_chain != null);
+        std.debug.assert(self.command_buffers.len == frames_in_flight_max);
+        std.debug.assert(self.present_complete_semaphores.len == frames_in_flight_max);
+        std.debug.assert(self.in_flight_fences.len == frames_in_flight_max);
+        std.debug.assert(self.render_finished_semaphores.len == self.swap_chain_images.len);
         if (self.device == null) {
             return error.DeviceNotCreated;
         }
@@ -1821,7 +1895,9 @@ const Application = struct {
 
         const frame_index = self.frame_index;
 
-        // Wait for this frame slot's fence (previous use of this slot is done).
+        // Wait for the fence associated with this frame slot to be signaled by the GPU.
+        // This ensures the CPU does not overwrite the command buffer or in-flight resources
+        // while the GPU is still executing commands from the previous loop iteration of this slot.
         try vulkan_check(
             vulkan.vkWaitForFences(
                 self.device,
@@ -1833,7 +1909,9 @@ const Application = struct {
             error.FailedToWaitForInFlightFence,
         );
 
-        // Acquire the next swap-chain image (may trigger recreation).
+        // Acquire the next available image index from the Vulkan swapchain.
+        // We pass a semaphore that will be signaled when the presentation engine is done
+        // reading from the image, indicating it is safe for our queue to write to it.
         const image_index = (try self.acquire_swap_chain_image(
             self.present_complete_semaphores[frame_index],
         )) orelse return;
@@ -1846,10 +1924,12 @@ const Application = struct {
             return error.RenderFinishedSemaphoreIndexOutOfBounds;
         }
 
-        // Reset the fence (AFTER successful acquisition, before submission).
+        // Reset the fence before submitting command buffers to the queue.
+        // This moves the fence back into an unsignaled state so we can wait on it in the next loop.
         try vulkan_check(vulkan.vkResetFences(self.device, 1, &self.in_flight_fences[frame_index]), error.FailedToResetInFlightFence);
 
-        // Reset and record the command buffer for this frame slot.
+        // Reset the command buffer memory for this frame slot before recording.
+        // Resetting is much more efficient than destroying and re-allocating command buffers.
         try vulkan_check(vulkan.vkResetCommandBuffer(self.command_buffers[frame_index], 0), error.FailedToResetCommandBuffer);
 
         try self.record_command_buffer(
@@ -1944,7 +2024,6 @@ const Application = struct {
         self.frame_index = 0;
     }
 };
-
 
 // +---------------+
 // |  FPS Counter  |
@@ -2058,6 +2137,8 @@ fn choose_swap_present_mode(available_modes: []const vulkan.VkPresentModeKHR) !v
         // Return vulkan.VK_PRESENT_MODE_IMMEDIATE_KHR;.
         // }
 
+        // Mailbox mode (triple buffering) is preferred as it avoids tearing while maintaining
+        // low input latency compared to double-buffered VSync (FIFO).
         if (mode == vulkan.VK_PRESENT_MODE_MAILBOX_KHR) {
             return vulkan.VK_PRESENT_MODE_MAILBOX_KHR;
         }
