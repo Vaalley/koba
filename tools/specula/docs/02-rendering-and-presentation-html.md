@@ -16,7 +16,8 @@ The previous Koba lessons created the resources needed to render:
 10. Koba creates a command pool and command buffer.
 11. Koba records rendering commands.
 
-This lesson connects those pieces into a frame loop that submits work and presents an image:
+This lesson connects those pieces into a frame loop that submits work and
+presents an image:
 
 ```text
 SDL events
@@ -46,7 +47,8 @@ while (!glfwWindowShouldClose(window)) {
 }
 ```
 
-Koba uses SDL3 and raw Vulkan C bindings translated by `addTranslateC`. The corresponding calls are:
+Koba uses SDL3 and raw Vulkan C bindings translated by `addTranslateC`. The
+corresponding calls are:
 
 ```zig
 sdl.SDL_PollEvent(...)
@@ -55,7 +57,8 @@ vk.vkQueueSubmit(...)
 vk.vkQueuePresentKHR(...)
 ```
 
-No `vulkan-zig` proxy objects are introduced. Vulkan handles remain raw nullable handles such as:
+No `vulkan-zig` proxy objects are introduced. Vulkan handles remain raw nullable
+handles such as:
 
 ```zig
 vk.VkSemaphore
@@ -73,7 +76,9 @@ This lesson extends the existing `HelloTriangleApplication` in `src/main.zig`.
 
 The CPU and GPU run asynchronously.
 
-When the application submits a command buffer, the GPU may still be processing it while the CPU begins preparing the next frame. Without synchronization, the CPU could:
+When the application submits a command buffer, the GPU may still be processing
+it while the CPU begins preparing the next frame. Without synchronization, the
+CPU could:
 
 - reuse a command buffer that the GPU is still reading,
 - acquire an image before the presentation engine releases it,
@@ -124,7 +129,8 @@ submit rendering commands
 present image
 ```
 
-The CPU does not normally inspect a semaphore directly. It provides semaphores to Vulkan structures that describe GPU-side waits and signals.
+The CPU does not normally inspect a semaphore directly. It provides semaphores
+to Vulkan structures that describe GPU-side waits and signals.
 
 ### Fences synchronize the CPU with the GPU
 
@@ -136,7 +142,8 @@ At the beginning of `drawFrame`, Koba waits for the previous submission's fence:
 vk.vkWaitForFences(...)
 ```
 
-Only after that wait succeeds is it safe to reuse the command buffer and submit another frame using the same fence.
+Only after that wait succeeds is it safe to reuse the command buffer and submit
+another frame using the same fence.
 
 The fence is created in the signaled state:
 
@@ -144,15 +151,20 @@ The fence is created in the signaled state:
 .flags = vk.VK_FENCE_CREATE_SIGNALED_BIT,
 ```
 
-This matters because the first frame has not submitted any work yet. Without an initially signaled fence, the first call to `vk.vkWaitForFences` would wait forever.
+This matters because the first frame has not submitted any work yet. Without an
+initially signaled fence, the first call to `vk.vkWaitForFences` would wait
+forever.
 
 ### Why the fence is reset only after image acquisition
 
 A subtle edge case occurs if image acquisition fails.
 
-If the application resets the fence and then `vk.vkAcquireNextImageKHR` returns `VK_ERROR_OUT_OF_DATE_KHR`, no submission will signal the reset fence. Waiting on it during the next frame would block indefinitely.
+If the application resets the fence and then `vk.vkAcquireNextImageKHR` returns
+`VK_ERROR_OUT_OF_DATE_KHR`, no submission will signal the reset fence. Waiting
+on it during the next frame would block indefinitely.
 
-This translation waits for the previous fence, acquires the image, and only then resets the fence:
+This translation waits for the previous fence, acquires the image, and only then
+resets the fence:
 
 ```text
 wait for previous submission
@@ -173,7 +185,8 @@ This ordering is safer for swap-chain recreation.
 
 ### Why image acquisition is separate from rendering
 
-The swap chain owns several images. The presentation engine decides which image is available next.
+The swap chain owns several images. The presentation engine decides which image
+is available next.
 
 The application asks for an available image with:
 
@@ -190,7 +203,9 @@ self.swap_chain_image_views[image_index]
 
 The command buffer must record rendering commands for that selected image.
 
-The image index is not a byte offset or an arbitrary application identifier. It is an index supplied by Vulkan and must be bounds-checked before converting it to a Zig slice index.
+The image index is not a byte offset or an arbitrary application identifier. It
+is an index supplied by Vulkan and must be bounds-checked before converting it
+to a Zig slice index.
 
 ### `VK_SUBOPTIMAL_KHR` is not an immediate failure
 
@@ -200,9 +215,12 @@ Image acquisition and presentation can return:
 vk.VK_SUBOPTIMAL_KHR
 ```
 
-This means that the swap chain can still be used, but its configuration is no longer ideal. For example, the window may have changed size or display characteristics.
+This means that the swap chain can still be used, but its configuration is no
+longer ideal. For example, the window may have changed size or display
+characteristics.
 
-A renderer can continue using the returned image, but should normally recreate the swap chain when convenient.
+A renderer can continue using the returned image, but should normally recreate
+the swap chain when convenient.
 
 By contrast:
 
@@ -210,13 +228,16 @@ By contrast:
 vk.VK_ERROR_OUT_OF_DATE_KHR
 ```
 
-usually means that the swap chain can no longer be used for the current surface configuration. A complete renderer should recreate it.
+usually means that the swap chain can no longer be used for the current surface
+configuration. A complete renderer should recreate it.
 
-This lesson reports those conditions explicitly. Swap-chain recreation can be added in a later lesson without changing the synchronization model.
+This lesson reports those conditions explicitly. Swap-chain recreation can be
+added in a later lesson without changing the synchronization model.
 
 ### Why the submit wait stage is color attachment output
 
-The acquired swap-chain image must not be written until the acquire semaphore signals.
+The acquired swap-chain image must not be written until the acquire semaphore
+signals.
 
 The submit structure uses:
 
@@ -224,11 +245,13 @@ The submit structure uses:
 vk.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
 ```
 
-as the wait destination stage. This means the rendering work waits before the color-attachment stage writes the swap-chain image.
+as the wait destination stage. This means the rendering work waits before the
+color-attachment stage writes the swap-chain image.
 
 This matches the command buffer's use of the image as a color attachment.
 
-The submit structure is a legacy Vulkan submission structure, so it uses the non-synchronization2 stage constant:
+The submit structure is a legacy Vulkan submission structure, so it uses the
+non-synchronization2 stage constant:
 
 ```zig
 vk.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
@@ -240,11 +263,13 @@ That is different from the synchronization2 constant used inside image barriers:
 vk.VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT
 ```
 
-The two constants belong to different Vulkan APIs and should not be mixed casually.
+The two constants belong to different Vulkan APIs and should not be mixed
+casually.
 
 ### Why presentation waits on the render-finished semaphore
 
-Submitting a command buffer only schedules GPU work. It does not guarantee that rendering has completed when `vk.vkQueueSubmit` returns.
+Submitting a command buffer only schedules GPU work. It does not guarantee that
+rendering has completed when `vk.vkQueueSubmit` returns.
 
 Presentation must wait until the color attachment has been rendered:
 
@@ -264,7 +289,8 @@ The `VkPresentInfoKHR` structure contains this wait semaphore:
 .pWaitSemaphores = &render_finished_semaphore
 ```
 
-As a result, the presentation engine does not use the image until rendering has finished.
+As a result, the presentation engine does not use the image until rendering has
+finished.
 
 ### Why the command buffer must be recorded for the acquired image
 
@@ -291,11 +317,13 @@ submit command buffer
 present image 2
 ```
 
-Recording once during initialization is not sufficient when the selected swap-chain image changes from frame to frame.
+Recording once during initialization is not sufficient when the selected
+swap-chain image changes from frame to frame.
 
 ### The C++ subpass dependency is not used with dynamic rendering
 
-The source includes a `vk::SubpassDependency`. That structure belongs to the traditional render-pass model:
+The source includes a `vk::SubpassDependency`. That structure belongs to the
+traditional render-pass model:
 
 ```text
 VkRenderPass
@@ -311,15 +339,20 @@ vk.vkCmdBeginRendering(...)
 vk.vkCmdEndRendering(...)
 ```
 
-Dynamic rendering does not create a `VkRenderPass` or subpass, so a `VkSubpassDependency` should not be added to this path.
+Dynamic rendering does not create a `VkRenderPass` or subpass, so a
+`VkSubpassDependency` should not be added to this path.
 
-The equivalent synchronization for the dynamic-rendering path is already represented by the explicit `VkImageMemoryBarrier2` transitions recorded in the command buffer.
+The equivalent synchronization for the dynamic-rendering path is already
+represented by the explicit `VkImageMemoryBarrier2` transitions recorded in the
+command buffer.
 
-Do not add traditional render-pass dependencies unless the project changes back to `vk.vkCmdBeginRenderPass`.
+Do not add traditional render-pass dependencies unless the project changes back
+to `vk.vkCmdBeginRenderPass`.
 
 ### Cleanup order matters
 
-Synchronization objects, command buffers, and command pools depend on the logical device.
+Synchronization objects, command buffers, and command pools depend on the
+logical device.
 
 A suitable cleanup order is:
 
@@ -340,7 +373,8 @@ SDL window
 SDL
 ```
 
-The exact order among independent device objects is less important than destroying every device-owned object before destroying the logical device.
+The exact order among independent device objects is less important than
+destroying every device-owned object before destroying the logical device.
 
 ---
 
@@ -373,7 +407,8 @@ render_finished_semaphore: vk.VkSemaphore = null,
 draw_fence: vk.VkFence = null,
 ```
 
-Each handle begins as `null`. In this project, `null` means that Koba does not currently own a valid Vulkan object.
+Each handle begins as `null`. In this project, `null` means that Koba does not
+currently own a valid Vulkan object.
 
 ### Extend Vulkan initialization
 
@@ -396,7 +431,8 @@ fn initVulkan(self: *HelloTriangleApplication) !void {
 }
 ```
 
-Preserve any existing initialization calls from the project. The important dependency is:
+Preserve any existing initialization calls from the project. The important
+dependency is:
 
 ```text
 logical device
@@ -495,13 +531,15 @@ fn createSyncObjects(self: *HelloTriangleApplication) !void {
 }
 ```
 
-The raw C binding requires an output pointer for each created handle. This is different from the C++ RAII constructor:
+The raw C binding requires an output pointer for each created handle. This is
+different from the C++ RAII constructor:
 
 ```cpp
 vk::raii::Semaphore(device, semaphoreInfo)
 ```
 
-The `errdefer` blocks prevent partially created synchronization objects from leaking if a later creation call fails.
+The `errdefer` blocks prevent partially created synchronization objects from
+leaking if a later creation call fails.
 
 ### Add the frame loop
 
@@ -545,13 +583,17 @@ fn mainLoop(self: *HelloTriangleApplication) !void {
 }
 ```
 
-SDL3 does not use GLFW's `glfwWindowShouldClose`. The application instead observes SDL events and stops when it receives `SDL_EVENT_QUIT`.
+SDL3 does not use GLFW's `glfwWindowShouldClose`. The application instead
+observes SDL events and stops when it receives `SDL_EVENT_QUIT`.
 
-`std.mem.zeroes` is appropriate for this C binding because `SDL_Event` is a C-style event union whose inactive fields do not need individual Zig initialization.
+`std.mem.zeroes` is appropriate for this C binding because `SDL_Event` is a
+C-style event union whose inactive fields do not need individual Zig
+initialization.
 
 ### Record the command buffer for the acquired image
 
-The previous command-buffer lesson introduced `recordCommandBuffer`. Its call should receive the acquired image index.
+The previous command-buffer lesson introduced `recordCommandBuffer`. Its call
+should receive the acquired image index.
 
 If the existing method accepts a `usize`, use:
 
@@ -562,15 +604,18 @@ try self.recordCommandBuffer(
 );
 ```
 
-If the project already stores the command buffer and its method accepts only an image index, use:
+If the project already stores the command buffer and its method accepts only an
+image index, use:
 
 ```zig
 try self.recordCommandBuffer(@intCast(image_index));
 ```
 
-The important rule is that the image index returned from Vulkan must be validated before it is used to index swap-chain arrays.
+The important rule is that the image index returned from Vulkan must be
+validated before it is used to index swap-chain arrays.
 
-The command recording should contain the sequence already established in the previous lesson:
+The command recording should contain the sequence already established in the
+previous lesson:
 
 ```text
 transition image to color attachment layout
@@ -606,9 +651,11 @@ fn waitForPreviousFrame(self: *HelloTriangleApplication) !void {
 }
 ```
 
-The timeout uses the largest `u64` value, which means “wait effectively forever” for this simple renderer.
+The timeout uses the largest `u64` value, which means “wait effectively forever”
+for this simple renderer.
 
-A production engine may use a finite timeout so that it can detect a hung device or continue processing other engine tasks.
+A production engine may use a finite timeout so that it can detect a hung device
+or continue processing other engine tasks.
 
 ### Acquire the next swap-chain image
 
@@ -667,9 +714,11 @@ fn acquireNextImage(self: *HelloTriangleApplication) !u32 {
 }
 ```
 
-The `null` fence argument means that image availability is reported through the semaphore rather than a fence.
+The `null` fence argument means that image availability is reported through the
+semaphore rather than a fence.
 
-The returned image index is checked against both arrays because the command recorder will use both the image and its image view.
+The returned image index is checked against both arrays because the command
+recorder will use both the image and its image view.
 
 ### Reset the frame fence
 
@@ -693,7 +742,9 @@ fn resetDrawFence(self: *HelloTriangleApplication) !void {
 }
 ```
 
-This is deliberately called after successful image acquisition. If acquisition reports that the swap chain is out of date, the fence remains signaled and can safely be waited on during the next frame.
+This is deliberately called after successful image acquisition. If acquisition
+reports that the swap chain is out of date, the fence remains signaled and can
+safely be waited on during the next frame.
 
 ### Submit the command buffer
 
@@ -764,7 +815,8 @@ The fields retain the raw Vulkan C names:
 .pSignalSemaphores
 ```
 
-The local variables are safe here because Vulkan reads the structures during the call that records the queue submission.
+The local variables are safe here because Vulkan reads the structures during the
+call that records the queue submission.
 
 ### Present the rendered image
 
@@ -824,9 +876,11 @@ fn presentImage(self: *HelloTriangleApplication, image_index: u32) !void {
 }
 ```
 
-The `.pResults = null` field is intentional. Per-swap-chain results are optional when only one swap chain is being presented.
+The `.pResults = null` field is intentional. Per-swap-chain results are optional
+when only one swap chain is being presented.
 
-The presentation operation waits for `render_finished_semaphore`, ensuring that the submitted rendering commands have finished before the image is displayed.
+The presentation operation waits for `render_finished_semaphore`, ensuring that
+the submitted rendering commands have finished before the image is displayed.
 
 ### Combine the frame operations
 
@@ -894,7 +948,8 @@ fn drawFrame(self: *HelloTriangleApplication) !void {
 }
 ```
 
-If the existing `recordCommandBuffer` method stores the command buffer as application state and accepts only an image index, replace the call with:
+If the existing `recordCommandBuffer` method stores the command buffer as
+application state and accepts only an image index, replace the call with:
 
 ```zig
 try self.recordCommandBuffer(image_index_usize);
@@ -935,7 +990,8 @@ fn destroySyncObjects(self: *HelloTriangleApplication) void {
 }
 ```
 
-Update the existing `cleanup()` method so these objects are destroyed before the command pool and logical device:
+Update the existing `cleanup()` method so these objects are destroyed before the
+command pool and logical device:
 
 ```zig
 fn cleanup(self: *HelloTriangleApplication) void {
@@ -980,13 +1036,18 @@ fn cleanup(self: *HelloTriangleApplication) void {
 }
 ```
 
-Merge this into the existing cleanup implementation rather than replacing cleanup with a new architecture.
+Merge this into the existing cleanup implementation rather than replacing
+cleanup with a new architecture.
 
-The command-buffer pointer passed to `vk.vkFreeCommandBuffers` must remain valid during the call. A local unwrapped handle is useful because the application field is nullable.
+The command-buffer pointer passed to `vk.vkFreeCommandBuffers` must remain valid
+during the call. A local unwrapped handle is useful because the application
+field is nullable.
 
 ### Complete lesson-specific `HelloTriangleApplication` additions
 
-The following is the single target-language merge unit for this lesson. Place the fields and methods inside the existing `HelloTriangleApplication` declaration in `src/main.zig`:
+The following is the single target-language merge unit for this lesson. Place
+the fields and methods inside the existing `HelloTriangleApplication`
+declaration in `src/main.zig`:
 
 ```zig
 const std = @import("std");
@@ -1473,8 +1534,13 @@ Important points:
 - The fence is reset only after successful image acquisition.
 - `VK_SUBOPTIMAL_KHR` means the swap chain still works but may need recreation.
 - `VK_ERROR_OUT_OF_DATE_KHR` requires a later swap-chain recreation path.
-- Dynamic rendering uses explicit image barriers rather than `VkSubpassDependency`.
-- The raw Vulkan functions require explicit output pointers and `VkResult` checks.
+- Dynamic rendering uses explicit image barriers rather than
+  `VkSubpassDependency`.
+- The raw Vulkan functions require explicit output pointers and `VkResult`
+  checks.
 - Synchronization objects must be destroyed before the logical device.
 
-The renderer can now submit and present frames. The next important engine feature is swap-chain recreation: handling window resizing, minimized windows, out-of-date presentation, and rebuilding image views, pipeline-dependent state, and per-frame resources safely.
+The renderer can now submit and present frames. The next important engine
+feature is swap-chain recreation: handling window resizing, minimized windows,
+out-of-date presentation, and rebuilding image views, pipeline-dependent state,
+and per-frame resources safely.

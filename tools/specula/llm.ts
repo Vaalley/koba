@@ -163,7 +163,7 @@ export function buildTranslationPrompts(input: PromptInput): {
 
 export async function translateLesson(
   input: PromptInput & {
-    apiKey: string;
+    apiKey?: string;
     model?: string;
     stream?: boolean;
     onChunk?: (chunk: string) => void;
@@ -171,11 +171,59 @@ export async function translateLesson(
 ): Promise<string> {
   const provider = input.config.provider ?? DEFAULT_PROVIDER;
   const model = input.model ?? DEFAULT_MODEL;
+  const { system, user } = buildTranslationPrompts(input);
+
+  const bridgeUrl = Deno.env.get("PI_TOOL_BRIDGE_URL");
+  const bridgeToken = Deno.env.get("PI_TOOL_BRIDGE_TOKEN");
+  const bridgeSession = Deno.env.get("PI_TOOL_BRIDGE_SESSION");
+  const bridgeRun = Deno.env.get("PI_TOOL_BRIDGE_RUN_ID") ??
+    Deno.env.get("PI_TOOL_BRIDGE_RUN") ??
+    Deno.env.get("OMP_RUN_ID") ??
+    "default";
+
+  if (bridgeUrl && bridgeToken && !input.apiKey) {
+    const response = await fetchWithRetry(`${bridgeUrl}/v1/tool`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${bridgeToken}`,
+      },
+      body: JSON.stringify({
+        session: bridgeSession,
+        run: bridgeRun,
+        name: "__completion__",
+        args: {
+          prompt: user,
+          system: system,
+          model: input.model ?? "default",
+        },
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(
+        `Harness request failed: ${response.status} ${errorText}`.trim(),
+      );
+    }
+
+    const json = await response.json() as {
+      ok?: boolean;
+      value?: { text?: string };
+      error?: string;
+    };
+    if (!json.ok || !json.value?.text) {
+      throw new Error(json.error ?? "Harness completion returned no content");
+    }
+
+    const content = json.value.text;
+    input.onChunk?.(content);
+    return content;
+  }
+
   if (!input.apiKey) {
     throw new Error("Missing API key");
   }
-
-  const { system, user } = buildTranslationPrompts(input);
   const response = await fetchWithRetry(provider.endpoint, {
     method: "POST",
     headers: {

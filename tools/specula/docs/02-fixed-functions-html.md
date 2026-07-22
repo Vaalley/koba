@@ -15,9 +15,12 @@ The previous lessons prepared Koba's rendering resources:
 9. Koba loads SPIR-V and creates a shader module.
 10. Koba describes the vertex and fragment shader stages.
 
-This lesson translates the **fixed-function portion** of graphics-pipeline creation from C++ to Zig.
+This lesson translates the **fixed-function portion** of graphics-pipeline
+creation from C++ to Zig.
 
-Despite the name, “fixed function” does not mean that the GPU is inflexible. It means that these rendering choices are configured through Vulkan structures rather than written as shader code.
+Despite the name, “fixed function” does not mean that the GPU is inflexible. It
+means that these rendering choices are configured through Vulkan structures
+rather than written as shader code.
 
 The pipeline will describe:
 
@@ -63,7 +66,8 @@ vk.vkCreateGraphicsPipelines(...)
 vk.vkDestroyPipeline(...)
 ```
 
-It does not use `vk.PipelineProxy`, `vk.DeviceProxy`, `self.device.create*`, or other wrapper-style APIs.
+It does not use `vk.PipelineProxy`, `vk.DeviceProxy`, `self.device.create*`, or
+other wrapper-style APIs.
 
 ---
 
@@ -71,7 +75,9 @@ It does not use `vk.PipelineProxy`, `vk.DeviceProxy`, `self.device.create*`, or 
 
 ### Why the graphics pipeline needs fixed-function state
 
-A vertex shader transforms vertices, and a fragment shader produces colors. However, shaders do not define the entire journey from vertex data to a final swap-chain pixel.
+A vertex shader transforms vertices, and a fragment shader produces colors.
+However, shaders do not define the entire journey from vertex data to a final
+swap-chain pixel.
 
 The graphics pipeline also needs to know:
 
@@ -97,13 +103,16 @@ color blending
 render target
 ```
 
-These stages determine how Vulkan interprets shader output and how fragments become pixels.
+These stages determine how Vulkan interprets shader output and how fragments
+become pixels.
 
-Vulkan requires these choices to be explicit so that the driver can validate and optimize the pipeline before rendering begins.
+Vulkan requires these choices to be explicit so that the driver can validate and
+optimize the pipeline before rendering begins.
 
 ### Pipeline state is mostly immutable
 
-Once a graphics pipeline has been created, much of its state cannot be changed while drawing.
+Once a graphics pipeline has been created, much of its state cannot be changed
+while drawing.
 
 For example, changing any of these commonly requires another pipeline:
 
@@ -117,34 +126,45 @@ For example, changing any of these commonly requires another pipeline:
 
 This is a deliberate Vulkan trade-off:
 
-- **Benefit:** rendering is predictable and has less per-draw configuration overhead.
-- **Cost:** engines may need several pipelines for different materials, passes, and render targets.
+- **Benefit:** rendering is predictable and has less per-draw configuration
+  overhead.
+- **Cost:** engines may need several pipelines for different materials, passes,
+  and render targets.
 
-Some state can be made dynamic. This lesson makes the viewport and scissor dynamic because those values commonly change when the window or swap chain is resized.
+Some state can be made dynamic. This lesson makes the viewport and scissor
+dynamic because those values commonly change when the window or swap chain is
+resized.
 
 ### Why the viewport and scissor are dynamic
 
-The viewport maps normalized device coordinates to framebuffer pixels. The scissor rectangle limits rasterization to a region of the framebuffer.
+The viewport maps normalized device coordinates to framebuffer pixels. The
+scissor rectangle limits rasterization to a region of the framebuffer.
 
-For the initial renderer, both values normally cover the entire swap-chain extent:
+For the initial renderer, both values normally cover the entire swap-chain
+extent:
 
 ```text
 viewport: [0, 0, swap-chain width, swap-chain height]
 scissor:  [0, 0, swap-chain width, swap-chain height]
 ```
 
-Making them dynamic means the pipeline does not need to be recreated just because the swap-chain extent changes. The command buffer will set them later with:
+Making them dynamic means the pipeline does not need to be recreated just
+because the swap-chain extent changes. The command buffer will set them later
+with:
 
 ```zig
 vk.vkCmdSetViewport(...)
 vk.vkCmdSetScissor(...)
 ```
 
-The trade-off is that every command buffer recording must set these values before drawing. If the values are omitted, Vulkan validation will report that required dynamic state was not set.
+The trade-off is that every command buffer recording must set these values
+before drawing. If the values are omitted, Vulkan validation will report that
+required dynamic state was not set.
 
 ### Why vertex input is empty for this shader
 
-The Slang vertex shader uses `SV_VertexID` and contains its vertex positions and colors internally. Therefore, the first triangle does not need:
+The Slang vertex shader uses `SV_VertexID` and contains its vertex positions and
+colors internally. Therefore, the first triangle does not need:
 
 - a vertex buffer,
 - vertex binding descriptions,
@@ -159,7 +179,8 @@ The Vulkan vertex-input state is still required, but it can be empty:
 .pVertexAttributeDescriptions = null,
 ```
 
-This is a temporary teaching choice. A real engine will normally use vertex buffers so that meshes and models can provide their own data.
+This is a temporary teaching choice. A real engine will normally use vertex
+buffers so that meshes and models can provide their own data.
 
 ### Why triangle-list assembly is used
 
@@ -172,9 +193,11 @@ vertices 0, 1, 2 -> triangle 0
 vertices 3, 4, 5 -> triangle 1
 ```
 
-Each group of three vertices is independent. This is simple and predictable for the first triangle.
+Each group of three vertices is independent. This is simple and predictable for
+the first triangle.
 
-Other topologies, such as triangle strips or line lists, change how vertices are grouped and are useful for different rendering tasks.
+Other topologies, such as triangle strips or line lists, change how vertices are
+grouped and are useful for different rendering tasks.
 
 ### Rasterization
 
@@ -188,7 +211,9 @@ This lesson uses:
 - no depth bias,
 - no rasterizer discard.
 
-The `frontFace` choice must agree with the coordinate conventions used by the shaders and viewport. If triangles appear to be missing, back-face culling and winding order are common things to inspect.
+The `frontFace` choice must agree with the coordinate conventions used by the
+shaders and viewport. If triangles appear to be missing, back-face culling and
+winding order are common things to inspect.
 
 A useful debugging option is temporarily changing culling to:
 
@@ -196,11 +221,13 @@ A useful debugging option is temporarily changing culling to:
 .cullMode = vk.VK_CULL_MODE_NONE,
 ```
 
-That can reveal whether the problem is winding rather than shader or swap-chain setup.
+That can reveal whether the problem is winding rather than shader or swap-chain
+setup.
 
 ### Multisampling
 
-Multisampling can improve the appearance of polygon edges by evaluating coverage at multiple sample locations.
+Multisampling can improve the appearance of polygon edges by evaluating coverage
+at multiple sample locations.
 
 This first pipeline uses one sample:
 
@@ -208,7 +235,9 @@ This first pipeline uses one sample:
 .rasterizationSamples = vk.VK_SAMPLE_COUNT_1_BIT,
 ```
 
-That means multisampling is disabled for now. Enabling four or eight samples later requires checking physical-device limits and usually adding a multisampled render target.
+That means multisampling is disabled for now. Enabling four or eight samples
+later requires checking physical-device limits and usually adding a multisampled
+render target.
 
 The important distinction is:
 
@@ -218,7 +247,8 @@ The important distinction is:
 
 ### Color blending
 
-Color blending combines a fragment shader's output with the existing destination pixel.
+Color blending combines a fragment shader's output with the existing destination
+pixel.
 
 For opaque rendering, blending is disabled:
 
@@ -226,7 +256,8 @@ For opaque rendering, blending is disabled:
 .blendEnable = vk.VK_FALSE,
 ```
 
-The fragment color directly replaces the destination color, subject to the color write mask.
+The fragment color directly replaces the destination color, subject to the color
+write mask.
 
 For transparent materials, a common blend configuration is:
 
@@ -244,7 +275,9 @@ The corresponding Vulkan state uses:
 .dstColorBlendFactor = vk.VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
 ```
 
-This lesson keeps blending enabled in the code so the state is ready for ordinary alpha-based transparency. If the initial triangle should be strictly opaque, set `.blendEnable = vk.VK_FALSE`.
+This lesson keeps blending enabled in the code so the state is ready for
+ordinary alpha-based transparency. If the initial triangle should be strictly
+opaque, set `.blendEnable = vk.VK_FALSE`.
 
 ### Why a pipeline layout is required
 
@@ -262,9 +295,11 @@ The current shaders use neither, so the layout can be empty:
 .pPushConstantRanges = null,
 ```
 
-An empty layout is still a real Vulkan object. Future material and camera systems will add descriptor-set layouts or push-constant ranges.
+An empty layout is still a real Vulkan object. Future material and camera
+systems will add descriptor-set layouts or push-constant ranges.
 
-The graphics pipeline refers to this layout, so the layout must be created before the pipeline.
+The graphics pipeline refers to this layout, so the layout must be created
+before the pipeline.
 
 ### The render pass is a pipeline dependency
 
@@ -275,13 +310,16 @@ A graphics pipeline must specify which render pass it is compatible with:
 .subpass = 0,
 ```
 
-This lesson assumes the preceding render-pass lesson already added and initialized:
+This lesson assumes the preceding render-pass lesson already added and
+initialized:
 
 ```zig
 render_pass: vk.VkRenderPass = null,
 ```
 
-The render pass must be created before `createGraphicsPipeline()` runs. If the render pass is missing or incompatible with the swap-chain image format, pipeline creation fails.
+The render pass must be created before `createGraphicsPipeline()` runs. If the
+render pass is missing or incompatible with the swap-chain image format,
+pipeline creation fails.
 
 The dependency now becomes:
 
@@ -356,7 +394,8 @@ fn initVulkan(self: *HelloTriangleApplication) !void {
 }
 ```
 
-If the existing project already calls `createRenderPass()` elsewhere, keep only one call and place `createGraphicsPipeline()` immediately after it.
+If the existing project already calls `createRenderPass()` elsewhere, keep only
+one call and place `createGraphicsPipeline()` immediately after it.
 
 The ordering matters because `createGraphicsPipeline()` needs:
 
@@ -381,7 +420,8 @@ vk::PipelineDynamicStateCreateInfo dynamicState{
 };
 ```
 
-The raw C-binding translation uses a fixed array because there are exactly two states:
+The raw C-binding translation uses a fixed array because there are exactly two
+states:
 
 ```zig
 const dynamic_states = [_]vk.VkDynamicState{
@@ -398,11 +438,14 @@ const dynamic_state = vk.VkPipelineDynamicStateCreateInfo{
 };
 ```
 
-The array must remain alive while `vk.vkCreateGraphicsPipelines()` reads it. Keeping it in the same function as the pipeline creation call satisfies that lifetime requirement.
+The array must remain alive while `vk.vkCreateGraphicsPipelines()` reads it.
+Keeping it in the same function as the pipeline creation call satisfies that
+lifetime requirement.
 
 ### Configure vertex input
 
-The shader obtains vertex data through `SV_VertexID`, so no buffer descriptions are needed:
+The shader obtains vertex data through `SV_VertexID`, so no buffer descriptions
+are needed:
 
 ```zig
 const vertex_input = vk.VkPipelineVertexInputStateCreateInfo{
@@ -416,7 +459,8 @@ const vertex_input = vk.VkPipelineVertexInputStateCreateInfo{
 };
 ```
 
-This does not mean Vulkan cannot use vertex buffers. It only means this particular shader does not currently require them.
+This does not mean Vulkan cannot use vertex buffers. It only means this
+particular shader does not currently require them.
 
 ### Configure input assembly
 
@@ -434,7 +478,8 @@ const input_assembly = vk.VkPipelineInputAssemblyStateCreateInfo{
 
 ### Configure dynamic viewport and scissor state
 
-Because viewport and scissor are dynamic, the pipeline declares that one of each will be supplied during command-buffer recording:
+Because viewport and scissor are dynamic, the pipeline declares that one of each
+will be supplied during command-buffer recording:
 
 ```zig
 const viewport_state = vk.VkPipelineViewportStateCreateInfo{
@@ -448,13 +493,17 @@ const viewport_state = vk.VkPipelineViewportStateCreateInfo{
 };
 ```
 
-The pointers are `null` intentionally. The values will be supplied later with `vk.vkCmdSetViewport` and `vk.vkCmdSetScissor`.
+The pointers are `null` intentionally. The values will be supplied later with
+`vk.vkCmdSetViewport` and `vk.vkCmdSetScissor`.
 
-A common confusion is that `viewportCount` and `scissorCount` still need to be set even though the pointer fields are null. The counts tell Vulkan how many dynamic values the pipeline expects.
+A common confusion is that `viewportCount` and `scissorCount` still need to be
+set even though the pointer fields are null. The counts tell Vulkan how many
+dynamic values the pipeline expects.
 
 ### Static viewport and scissor alternative
 
-If dynamic state is not used, the structures would instead contain actual values:
+If dynamic state is not used, the structures would instead contain actual
+values:
 
 ```zig
 const viewport = vk.VkViewport{
@@ -485,7 +534,8 @@ const viewport_state = vk.VkPipelineViewportStateCreateInfo{
 };
 ```
 
-Do not use both approaches at the same time. This lesson chooses dynamic state so resizing can update the viewport without recreating the pipeline.
+Do not use both approaches at the same time. This lesson chooses dynamic state
+so resizing can update the viewport without recreating the pipeline.
 
 ### Configure rasterization
 
@@ -507,7 +557,8 @@ const rasterizer = vk.VkPipelineRasterizationStateCreateInfo{
 };
 ```
 
-The extra depth-bias fields must still be initialized even though depth bias is disabled.
+The extra depth-bias fields must still be initialized even though depth bias is
+disabled.
 
 If the triangle is unexpectedly invisible, temporarily use:
 
@@ -515,7 +566,8 @@ If the triangle is unexpectedly invisible, temporarily use:
 .cullMode = vk.VK_CULL_MODE_NONE,
 ```
 
-This helps determine whether the configured winding order disagrees with the shader's coordinate system.
+This helps determine whether the configured winding order disagrees with the
+shader's coordinate system.
 
 ### Configure multisampling
 
@@ -535,7 +587,8 @@ const multisampling = vk.VkPipelineMultisampleStateCreateInfo{
 };
 ```
 
-This is equivalent to disabling multisampling for now. Later, the physical-device limits must be queried before selecting a higher sample count.
+This is equivalent to disabling multisampling for now. Later, the
+physical-device limits must be queried before selecting a higher sample count.
 
 ### Configure color blending
 
@@ -591,7 +644,8 @@ const color_blending = vk.VkPipelineColorBlendStateCreateInfo{
 };
 ```
 
-If the first triangle should be opaque, use this simpler attachment configuration:
+If the first triangle should be opaque, use this simpler attachment
+configuration:
 
 ```zig
 const color_blend_attachment = vk.VkPipelineColorBlendAttachmentState{
@@ -610,11 +664,14 @@ const color_blend_attachment = vk.VkPipelineColorBlendAttachmentState{
 };
 ```
 
-Blending is not automatically transparency. The fragment shader must output a meaningful alpha value, and the render order of transparent objects will matter later.
+Blending is not automatically transparency. The fragment shader must output a
+meaningful alpha value, and the render order of transparent objects will matter
+later.
 
 ### Create the pipeline layout
 
-The current shaders do not use descriptors or push constants, so the layout is empty:
+The current shaders do not use descriptors or push constants, so the layout is
+empty:
 
 ```zig
 fn createPipelineLayout(self: *HelloTriangleApplication) !void {
@@ -642,11 +699,14 @@ fn createPipelineLayout(self: *HelloTriangleApplication) !void {
 }
 ```
 
-The pipeline layout is created separately so that its lifetime is explicit. The graphics pipeline stores a reference to it, so the layout must remain alive until the pipeline is destroyed.
+The pipeline layout is created separately so that its lifetime is explicit. The
+graphics pipeline stores a reference to it, so the layout must remain alive
+until the pipeline is destroyed.
 
 ### Create the graphics pipeline
 
-The following method combines the shader stages from the shader-module lesson with the fixed-function structures from this lesson.
+The following method combines the shader stages from the shader-module lesson
+with the fixed-function structures from this lesson.
 
 It assumes the existing application already provides:
 
@@ -824,11 +884,14 @@ fn createGraphicsPipeline(self: *HelloTriangleApplication) !void {
 }
 ```
 
-All temporary structures remain alive until `vk.vkCreateGraphicsPipelines()` returns. That is sufficient because Vulkan reads the structures during the call and does not retain pointers to the application's local variables.
+All temporary structures remain alive until `vk.vkCreateGraphicsPipelines()`
+returns. That is sufficient because Vulkan reads the structures during the call
+and does not retain pointers to the application's local variables.
 
 ### Destroy pipeline objects during cleanup
 
-The graphics pipeline depends on the pipeline layout, so destroy the pipeline first:
+The graphics pipeline depends on the pipeline layout, so destroy the pipeline
+first:
 
 ```zig
 fn destroyGraphicsPipeline(self: *HelloTriangleApplication) void {
@@ -852,7 +915,8 @@ fn destroyGraphicsPipeline(self: *HelloTriangleApplication) void {
 }
 ```
 
-Call this before destroying the shader module, image views, swap chain, or logical device:
+Call this before destroying the shader module, image views, swap chain, or
+logical device:
 
 ```zig
 fn cleanup(self: *HelloTriangleApplication) void {
@@ -926,11 +990,14 @@ SDL window
 SDL
 ```
 
-If the render pass is owned by `HelloTriangleApplication`, destroy it after the graphics pipeline and before the device. A pipeline must never outlive the render pass it references.
+If the render pass is owned by `HelloTriangleApplication`, destroy it after the
+graphics pipeline and before the device. A pipeline must never outlive the
+render pass it references.
 
 ### Future command-buffer state
 
-Because viewport and scissor were declared dynamic, future draw-command recording must include calls similar to:
+Because viewport and scissor were declared dynamic, future draw-command
+recording must include calls similar to:
 
 ```zig
 var viewport = vk.VkViewport{
@@ -954,15 +1021,18 @@ vk.vkCmdSetViewport(command_buffer, 0, 1, &viewport);
 vk.vkCmdSetScissor(command_buffer, 0, 1, &scissor);
 ```
 
-These calls belong after command-buffer recording begins, not inside graphics-pipeline creation.
+These calls belong after command-buffer recording begins, not inside
+graphics-pipeline creation.
 
-The dynamic state connects this lesson to swap-chain resizing: the pipeline can remain unchanged while the command buffer supplies a new extent.
+The dynamic state connects this lesson to swap-chain resizing: the pipeline can
+remain unchanged while the command buffer supplies a new extent.
 
 ---
 
 ## Recap & What's Next
 
-This lesson translated the fixed-function graphics-pipeline state from C++ to Zig 0.16.0.
+This lesson translated the fixed-function graphics-pipeline state from C++ to
+Zig 0.16.0.
 
 The important translations were:
 
@@ -1011,11 +1081,14 @@ Important points:
 - Vulkan pipeline state is explicit and mostly immutable.
 - The vertex input state is empty because the shader uses `SV_VertexID`.
 - Triangle-list assembly produces independent groups of three vertices.
-- Viewport and scissor are dynamic, so they must be set during command recording.
+- Viewport and scissor are dynamic, so they must be set during command
+  recording.
 - Rasterization controls polygon filling, face culling, and winding.
 - Multisampling is currently disabled with one sample.
-- Color blending determines how fragment output combines with the existing pixel.
-- The pipeline layout is empty now but will later hold descriptors and push constants.
+- Color blending determines how fragment output combines with the existing
+  pixel.
+- The pipeline layout is empty now but will later hold descriptors and push
+  constants.
 - The render pass must exist before pipeline creation.
 - Every Vulkan result is checked explicitly against `vk.VK_SUCCESS`.
 - Pipeline objects are destroyed before their dependencies.
@@ -1037,4 +1110,7 @@ render pass
 graphics pipeline
 ```
 
-Next, the engine can create framebuffers and command buffers. Framebuffers will connect each swap-chain image view to the render pass, while command buffers will bind the graphics pipeline, set dynamic state, and issue the first draw command.
+Next, the engine can create framebuffers and command buffers. Framebuffers will
+connect each swap-chain image view to the render pass, while command buffers
+will bind the graphics pipeline, set dynamic state, and issue the first draw
+command.

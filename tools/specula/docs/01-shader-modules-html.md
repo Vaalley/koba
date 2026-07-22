@@ -12,9 +12,12 @@ The previous lessons prepared the resources needed to begin drawing:
 6. Koba creates a swap chain.
 7. Koba creates image views for the swap-chain images.
 
-This lesson loads compiled Slang shader code and creates a Vulkan **shader module**.
+This lesson loads compiled Slang shader code and creates a Vulkan **shader
+module**.
 
-A shader module is Vulkan's representation of compiled shader instructions. It is not yet a complete graphics pipeline and it does not draw anything by itself. Instead, the module is supplied to a pipeline's shader-stage descriptions:
+A shader module is Vulkan's representation of compiled shader instructions. It
+is not yet a complete graphics pipeline and it does not draw anything by itself.
+Instead, the module is supplied to a pipeline's shader-stage descriptions:
 
 ```text
 Slang source
@@ -37,9 +40,11 @@ The source shader contains both entry points:
 - `vertMain` for the vertex stage,
 - `fragMain` for the fragment stage.
 
-The same Vulkan shader module can contain both entry points. The pipeline later selects the appropriate entry point by name.
+The same Vulkan shader module can contain both entry points. The pipeline later
+selects the appropriate entry point by name.
 
-This translation extends the existing `HelloTriangleApplication` in `src/main.zig`. It uses the project's raw C Vulkan bindings:
+This translation extends the existing `HelloTriangleApplication` in
+`src/main.zig`. It uses the project's raw C Vulkan bindings:
 
 ```zig
 const std = @import("std");
@@ -47,7 +52,8 @@ const sdl = @import("sdl3");
 const vk = @import("vulkan");
 ```
 
-There are no Vulkan-Hpp or `vulkan-zig` proxy objects. Shader modules are created and destroyed with:
+There are no Vulkan-Hpp or `vulkan-zig` proxy objects. Shader modules are
+created and destroyed with:
 
 ```zig
 vk.vkCreateShaderModule(...)
@@ -58,16 +64,20 @@ vk.vkDestroyShaderModule(...)
 
 ### Why shaders are compiled to SPIR-V
 
-The GPU does not execute Slang source code directly. Slang is compiled into SPIR-V, a binary intermediate representation understood by Vulkan drivers.
+The GPU does not execute Slang source code directly. Slang is compiled into
+SPIR-V, a binary intermediate representation understood by Vulkan drivers.
 
-Keeping shader compilation separate from application execution has several advantages:
+Keeping shader compilation separate from application execution has several
+advantages:
 
 - the game does not need a shader compiler at runtime,
 - shader syntax errors are found during the asset-build step,
 - the renderer loads compact binary data,
 - the same compiled shader can be reused by multiple pipeline configurations.
 
-The trade-off is that shader files must be rebuilt whenever their source changes. During development, a build step or file-watching tool can automate this process.
+The trade-off is that shader files must be rebuilt whenever their source
+changes. During development, a build step or file-watching tool can automate
+this process.
 
 ### A shader module is not a shader stage
 
@@ -89,7 +99,8 @@ shader_module
     +-- stage = FRAGMENT, pName = "fragMain"
 ```
 
-The stage description is where `"vertMain"` and `"fragMain"` are connected to the Vulkan pipeline.
+The stage description is where `"vertMain"` and `"fragMain"` are connected to
+the Vulkan pipeline.
 
 ### Why the entry-point names must match
 
@@ -114,9 +125,12 @@ Therefore the Vulkan stage descriptions must use:
 .pName = "fragMain",
 ```
 
-These names are not arbitrary. If the name does not exist in the SPIR-V module, pipeline creation fails.
+These names are not arbitrary. If the name does not exist in the SPIR-V module,
+pipeline creation fails.
 
-A common confusion is to use the source filename as the entry point. The filename identifies the module file; `pName` identifies a function inside that module.
+A common confusion is to use the source filename as the entry point. The
+filename identifies the module file; `pName` identifies a function inside that
+module.
 
 ### Why SPIR-V must be read as `u32`
 
@@ -126,7 +140,8 @@ Vulkan's `VkShaderModuleCreateInfo.pCode` points to 32-bit words:
 const uint32_t* pCode;
 ```
 
-A file is naturally read as bytes, but SPIR-V must have a size divisible by four and must be passed to Vulkan with suitable 32-bit alignment.
+A file is naturally read as bytes, but SPIR-V must have a size divisible by four
+and must be passed to Vulkan with suitable 32-bit alignment.
 
 The translation therefore:
 
@@ -136,13 +151,17 @@ The translation therefore:
 4. allocates `u32` storage,
 5. reads the file into the byte view of that aligned storage.
 
-This is safer than reading into `[]u8` and blindly casting its pointer to `[*]const u32`.
+This is safer than reading into `[]u8` and blindly casting its pointer to
+`[*]const u32`.
 
 ### Shader module lifetime
 
-A shader module is needed while creating the graphics pipeline. After pipeline creation succeeds, Vulkan has copied the necessary shader information into the pipeline, so the application can destroy the module.
+A shader module is needed while creating the graphics pipeline. After pipeline
+creation succeeds, Vulkan has copied the necessary shader information into the
+pipeline, so the application can destroy the module.
 
-For a first renderer, keeping the module in `HelloTriangleApplication` is simpler because:
+For a first renderer, keeping the module in `HelloTriangleApplication` is
+simpler because:
 
 - initialization and cleanup remain explicit,
 - the later pipeline lesson can use the handle,
@@ -163,7 +182,8 @@ SDL window
 SDL
 ```
 
-If the graphics pipeline is not yet present, destroy the shader module before destroying the device.
+If the graphics pipeline is not yet present, destroy the shader module before
+destroying the device.
 
 ### Per-vertex colors and shader interfaces
 
@@ -180,7 +200,9 @@ The fragment shader receives the same `VertexOutput` structure:
 float4 fragMain(VertexOutput inVert) : SV_Target
 ```
 
-The vertex stage therefore produces an interpolated color for each fragment. The three vertices have red, green, and blue colors, so the rasterizer interpolates those values across the triangle.
+The vertex stage therefore produces an interpolated color for each fragment. The
+three vertices have red, green, and blue colors, so the rasterizer interpolates
+those values across the triangle.
 
 This is an important rendering connection:
 
@@ -200,11 +222,13 @@ fragment shader receives values
 swap-chain image
 ```
 
-The `SV_Position` and `SV_Target` semantics are translated into the corresponding SPIR-V built-ins and outputs by Slang.
+The `SV_Position` and `SV_Target` semantics are translated into the
+corresponding SPIR-V built-ins and outputs by Slang.
 
 ### Shader compilation is separate from Vulkan code
 
-The Vulkan application should load `slang.spv`; it should not compile Slang source itself.
+The Vulkan application should load `slang.spv`; it should not compile Slang
+source itself.
 
 For example, place the source in a shader directory:
 
@@ -214,7 +238,10 @@ shaders/
     slang.spv
 ```
 
-The runtime path is relative to the process's current working directory. When running from an IDE, the working directory may differ from the project directory. If the file cannot be found, log the path and verify the program's working directory.
+The runtime path is relative to the process's current working directory. When
+running from an IDE, the working directory may differ from the project
+directory. If the file cannot be found, log the path and verify the program's
+working directory.
 
 ## Code Translation Sections
 
@@ -254,9 +281,11 @@ float4 fragMain(VertexOutput inVert) : SV_Target {
 }
 ```
 
-The vertex shader uses `SV_VertexID`, so no vertex buffer is required yet. Vulkan supplies the vertex ID when the draw command is issued.
+The vertex shader uses `SV_VertexID`, so no vertex buffer is required yet.
+Vulkan supplies the vertex ID when the draw command is issued.
 
-The fragment shader receives the interpolated color and returns it as the final pixel color.
+The fragment shader receives the interpolated color and returns it as the final
+pixel color.
 
 ### Compile the Slang shader
 
@@ -300,7 +329,8 @@ The output file is binary. Do not edit it as text.
 
 ### Add shader-module state
 
-Add this field to `HelloTriangleApplication` near the swap-chain and rendering fields:
+Add this field to `HelloTriangleApplication` near the swap-chain and rendering
+fields:
 
 ```zig
 shader_module: vk.VkShaderModule = null,
@@ -333,7 +363,8 @@ const HelloTriangleApplication = struct {
 };
 ```
 
-A Vulkan handle is nullable in this project. `null` means that creation has not succeeded or that cleanup has already destroyed the object.
+A Vulkan handle is nullable in this project. `null` means that creation has not
+succeeded or that cleanup has already destroyed the object.
 
 ### Load the SPIR-V file
 
@@ -376,9 +407,11 @@ The returned slice is owned by the caller. The caller must free it with:
 self.allocator.free(shader_code);
 ```
 
-The allocation uses `u32`, which gives the data the alignment expected by `VkShaderModuleCreateInfo.pCode`.
+The allocation uses `u32`, which gives the data the alignment expected by
+`VkShaderModuleCreateInfo.pCode`.
 
-The `readNoEof` call is important. It reports an error if the file ends before all expected bytes are read instead of silently accepting a truncated shader.
+The `readNoEof` call is important. It reports an error if the file ends before
+all expected bytes are read instead of silently accepting a truncated shader.
 
 ### Create a raw Vulkan shader module
 
@@ -388,7 +421,8 @@ The C++ code uses a RAII constructor:
 vk::raii::ShaderModule shaderModule{ device, createInfo };
 ```
 
-The raw C-binding translation must call `vk.vkCreateShaderModule` and provide an output pointer:
+The raw C-binding translation must call `vk.vkCreateShaderModule` and provide an
+output pointer:
 
 ```zig
 fn createShaderModule(
@@ -451,9 +485,12 @@ fn createShaderModules(self: *HelloTriangleApplication) !void {
 }
 ```
 
-The bytecode allocation only needs to survive until `vk.vkCreateShaderModule` returns. The Vulkan shader module owns the created Vulkan-side object; it does not retain the application's file buffer.
+The bytecode allocation only needs to survive until `vk.vkCreateShaderModule`
+returns. The Vulkan shader module owns the created Vulkan-side object; it does
+not retain the application's file buffer.
 
-Extend the existing `initVulkan` method after the logical device and swap-chain resources have been created:
+Extend the existing `initVulkan` method after the logical device and swap-chain
+resources have been created:
 
 ```zig
 fn initVulkan(self: *HelloTriangleApplication) !void {
@@ -468,7 +505,9 @@ fn initVulkan(self: *HelloTriangleApplication) !void {
 }
 ```
 
-The shader module only requires a logical device, so it can be created after `createLogicalDevice`. Keeping it after image-view creation follows the tutorial's resource order and makes the later pipeline step easy to append.
+The shader module only requires a logical device, so it can be created after
+`createLogicalDevice`. Keeping it after image-view creation follows the
+tutorial's resource order and makes the later pipeline step easy to append.
 
 ### Describe the vertex shader stage
 
@@ -504,7 +543,8 @@ fn makeVertexShaderStage(
 }
 ```
 
-The `.stage` field tells Vulkan how to execute the entry point. The `.pName` field selects the vertex function inside the module.
+The `.stage` field tells Vulkan how to execute the entry point. The `.pName`
+field selects the vertex function inside the module.
 
 ### Describe the fragment shader stage
 
@@ -530,7 +570,8 @@ fn makeFragmentShaderStage(
 }
 ```
 
-The vertex and fragment stages must agree about the values passed between them. Here, the vertex shader writes `color`, and the fragment shader reads `color`.
+The vertex and fragment stages must agree about the values passed between them.
+Here, the vertex shader writes `color`, and the fragment shader reads `color`.
 
 ### Build the two-stage array for pipeline creation
 
@@ -559,7 +600,9 @@ fn createShaderStages(
 }
 ```
 
-A fixed-size array is appropriate because this renderer always has exactly two programmable stages. It avoids an allocator and communicates the count at compile time.
+A fixed-size array is appropriate because this renderer always has exactly two
+programmable stages. It avoids an allocator and communicates the count at
+compile time.
 
 Later, graphics-pipeline creation can use:
 
@@ -574,7 +617,8 @@ const pipeline_create_info = vk.VkGraphicsPipelineCreateInfo{
 };
 ```
 
-The stage array must remain alive while `vk.vkCreateGraphicsPipelines` reads it. A local array is sufficient when pipeline creation happens in the same function.
+The stage array must remain alive while `vk.vkCreateGraphicsPipelines` reads it.
+A local array is sufficient when pipeline creation happens in the same function.
 
 ### Destroy the shader module during cleanup
 
@@ -593,7 +637,8 @@ fn destroyShaderModule(self: *HelloTriangleApplication) void {
 }
 ```
 
-Call it before image views, the swap chain, and the logical device are destroyed:
+Call it before image views, the swap chain, and the logical device are
+destroyed:
 
 ```zig
 fn cleanup(self: *HelloTriangleApplication) void {
@@ -641,7 +686,8 @@ fn cleanup(self: *HelloTriangleApplication) void {
 }
 ```
 
-If the graphics pipeline is added later, insert its destruction before `destroyShaderModule()`:
+If the graphics pipeline is added later, insert its destruction before
+`destroyShaderModule()`:
 
 ```text
 destroy graphics pipeline
@@ -653,7 +699,8 @@ destroy logical device
 
 ### Complete shader-specific additions
 
-The following code is the shader-specific portion to merge into the existing `HelloTriangleApplication`:
+The following code is the shader-specific portion to merge into the existing
+`HelloTriangleApplication`:
 
 ```zig
 shader_module: vk.VkShaderModule = null,
@@ -785,7 +832,11 @@ fn destroyShaderModule(self: *HelloTriangleApplication) void {
 }
 ```
 
-The exact generated binding may expose a pointer field as a C pointer type rather than a Zig many-pointer type. If the compiler reports a pointer-type mismatch for `.pCode`, preserve the same data and use the pointer conversion required by that generated declaration; do not change the shader code to a byte buffer passed directly as an unaligned `u8` pointer.
+The exact generated binding may expose a pointer field as a C pointer type
+rather than a Zig many-pointer type. If the compiler reports a pointer-type
+mismatch for `.pCode`, preserve the same data and use the pointer conversion
+required by that generated declaration; do not change the shader code to a byte
+buffer passed directly as an unaligned `u8` pointer.
 
 ## Recap & What's Next
 
@@ -806,7 +857,8 @@ shader stage   = module + stage type + entry point
 pipeline       = shader stages + fixed-function rendering configuration
 ```
 
-The next lesson can create the graphics pipeline. It will connect these shader stages to:
+The next lesson can create the graphics pipeline. It will connect these shader
+stages to:
 
 - the swap-chain image format,
 - the image views and framebuffers,
@@ -818,4 +870,5 @@ The next lesson can create the graphics pipeline. It will connect these shader s
 - color blending,
 - dynamic rendering or a render pass.
 
-Once the pipeline exists, Koba will have enough information to record a command buffer that invokes `vertMain` and `fragMain` to render the colored triangle.
+Once the pipeline exists, Koba will have enough information to record a command
+buffer that invokes `vertMain` and `fragMain` to render the colored triangle.

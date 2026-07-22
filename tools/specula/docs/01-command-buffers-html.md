@@ -17,7 +17,8 @@ The previous lessons created the resources needed to render:
 
 This lesson adds command-buffer support.
 
-A command buffer is a recorded list of GPU instructions. Vulkan separates **recording commands** from **executing commands**:
+A command buffer is a recorded list of GPU instructions. Vulkan separates
+**recording commands** from **executing commands**:
 
 ```text
 create command pool
@@ -42,9 +43,12 @@ The command buffer created here will:
 6. end dynamic rendering,
 7. transition the image into a presentation layout.
 
-This lesson records commands but does not yet add semaphores, fences, image acquisition, queue submission, or presentation. Those synchronization and frame-loop steps belong to the next part of the renderer.
+This lesson records commands but does not yet add semaphores, fences, image
+acquisition, queue submission, or presentation. Those synchronization and
+frame-loop steps belong to the next part of the renderer.
 
-Koba continues to use the existing `HelloTriangleApplication` in `src/main.zig` and the raw translated C bindings:
+Koba continues to use the existing `HelloTriangleApplication` in `src/main.zig`
+and the raw translated C bindings:
 
 ```zig
 const std = @import("std");
@@ -60,7 +64,8 @@ No Vulkan proxy wrappers are introduced.
 
 ### Why command buffers exist
 
-A Vulkan application does not issue most drawing commands directly to the GPU. Instead, it records commands into a `VkCommandBuffer`.
+A Vulkan application does not issue most drawing commands directly to the GPU.
+Instead, it records commands into a `VkCommandBuffer`.
 
 This design gives Vulkan several advantages:
 
@@ -70,7 +75,8 @@ This design gives Vulkan several advantages:
 - the driver can validate and prepare command streams efficiently,
 - the application controls exactly what work is submitted.
 
-For a game engine, command buffers are the bridge between high-level scene decisions and GPU execution:
+For a game engine, command buffers are the bridge between high-level scene
+decisions and GPU execution:
 
 ```text
 scene and renderer systems
@@ -85,7 +91,8 @@ graphics queue
 GPU execution
 ```
 
-The trade-off is that Vulkan requires more explicit lifetime and synchronization management than a higher-level graphics API.
+The trade-off is that Vulkan requires more explicit lifetime and synchronization
+management than a higher-level graphics API.
 
 ### Command pools own command-buffer allocation
 
@@ -103,9 +110,12 @@ command pool
 command buffer
 ```
 
-A command pool is associated with one queue family. This lesson uses `self.graphics_family`, which was selected when the physical device and logical device were created.
+A command pool is associated with one queue family. This lesson uses
+`self.graphics_family`, which was selected when the physical device and logical
+device were created.
 
-A command pool is not itself a queue. It is an allocator and reset context for command buffers.
+A command pool is not itself a queue. It is an allocator and reset context for
+command buffers.
 
 ### Why the command pool allows command-buffer reset
 
@@ -121,11 +131,14 @@ The raw Vulkan equivalent is:
 vk.VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT
 ```
 
-This flag allows an individual command buffer to be reset and recorded again without resetting the entire command pool.
+This flag allows an individual command buffer to be reset and recorded again
+without resetting the entire command pool.
 
-That is convenient for a first renderer because the same command buffer can be reused every frame.
+That is convenient for a first renderer because the same command buffer can be
+reused every frame.
 
-The trade-off is that command-pool reset behavior and allocation strategy can affect performance. More advanced engines often use:
+The trade-off is that command-pool reset behavior and allocation strategy can
+affect performance. More advanced engines often use:
 
 - one pool per recording thread,
 - one pool per frame in flight,
@@ -142,9 +155,13 @@ The command buffer is allocated with:
 
 A primary command buffer can be submitted directly to a queue.
 
-A secondary command buffer cannot be submitted by itself. It must be executed from a primary command buffer. Secondary buffers are useful when several systems or threads record portions of a frame independently, but they add another layer of organization.
+A secondary command buffer cannot be submitted by itself. It must be executed
+from a primary command buffer. Secondary buffers are useful when several systems
+or threads record portions of a frame independently, but they add another layer
+of organization.
 
-For the first triangle, a single primary command buffer is the simplest correct choice.
+For the first triangle, a single primary command buffer is the simplest correct
+choice.
 
 ### Recording is not execution
 
@@ -158,7 +175,8 @@ vk.vkEndCommandBuffer(...)
 
 only records commands.
 
-The GPU does not execute them until the command buffer is submitted to a queue with a call such as:
+The GPU does not execute them until the command buffer is submitted to a queue
+with a call such as:
 
 ```zig
 vk.vkQueueSubmit(...)
@@ -179,13 +197,16 @@ vkQueueSubmit()
 GPU executes commands
 ```
 
-The current lesson deliberately stops after recording. The next lesson can connect the recorded command buffer to swap-chain image acquisition, queue submission, and presentation.
+The current lesson deliberately stops after recording. The next lesson can
+connect the recorded command buffer to swap-chain image acquisition, queue
+submission, and presentation.
 
 ### Why image layout transitions are needed
 
 A Vulkan image has a layout that describes how the image is being used.
 
-The swap-chain image begins in an undefined or presentation-related state. Before rendering, it must be transitioned to:
+The swap-chain image begins in an undefined or presentation-related state.
+Before rendering, it must be transitioned to:
 
 ```zig
 vk.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
@@ -218,7 +239,8 @@ A layout transition is also a memory dependency. It tells Vulkan:
 - what future operations will do with the image,
 - which pipeline stages must wait for one another.
 
-Without the correct transition, validation errors or visual corruption are likely.
+Without the correct transition, validation errors or visual corruption are
+likely.
 
 ### Synchronization 2 barriers
 
@@ -238,7 +260,8 @@ vk.VkDependencyInfo
 vk.vkCmdPipelineBarrier2(...)
 ```
 
-`VkImageMemoryBarrier2` describes one image transition. `VkDependencyInfo` packages one or more memory, buffer, and image barriers.
+`VkImageMemoryBarrier2` describes one image transition. `VkDependencyInfo`
+packages one or more memory, buffer, and image barriers.
 
 The first transition uses:
 
@@ -249,7 +272,8 @@ The first transition uses:
 .dstAccessMask = vk.VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT,
 ```
 
-This means there is no previous operation that Koba needs to wait for in this initial example. The color-attachment output stage must wait before writing.
+This means there is no previous operation that Koba needs to wait for in this
+initial example. The color-attachment output stage must wait before writing.
 
 The second transition uses:
 
@@ -262,7 +286,8 @@ The second transition uses:
 
 This makes color writes available before the image is used for presentation.
 
-The exact synchronization masks become more important once the frame loop has semaphores and multiple frames in flight.
+The exact synchronization masks become more important once the frame loop has
+semaphores and multiple frames in flight.
 
 ### Dynamic rendering does not use a render pass object
 
@@ -278,7 +303,9 @@ The raw Vulkan call is:
 vk.vkCmdBeginRendering(command_buffer, &rendering_info);
 ```
 
-Dynamic rendering describes the active color attachment directly in the command buffer. It does not require a traditional `VkRenderPass` and framebuffer object for this draw.
+Dynamic rendering describes the active color attachment directly in the command
+buffer. It does not require a traditional `VkRenderPass` and framebuffer object
+for this draw.
 
 The rendering relationship is:
 
@@ -295,7 +322,11 @@ VkRenderingInfo
 vkCmdBeginRendering
 ```
 
-This differs from the earlier render-pass-based pipeline description. If the existing graphics pipeline was created for dynamic rendering, it must include the appropriate `VkPipelineRenderingCreateInfo` in its `pNext` chain and use a null render-pass handle. If the existing pipeline was created with a traditional render pass, the command-buffer code must instead use `vkCmdBeginRenderPass`.
+This differs from the earlier render-pass-based pipeline description. If the
+existing graphics pipeline was created for dynamic rendering, it must include
+the appropriate `VkPipelineRenderingCreateInfo` in its `pNext` chain and use a
+null render-pass handle. If the existing pipeline was created with a traditional
+render pass, the command-buffer code must instead use `vkCmdBeginRenderPass`.
 
 Do not mix the two models accidentally.
 
@@ -330,14 +361,16 @@ These choices affect performance and must match how the image is used.
 
 ### Dynamic viewport and scissor state must be set
 
-The earlier pipeline configuration made the viewport and scissor dynamic. Therefore, the command buffer must set both values before drawing:
+The earlier pipeline configuration made the viewport and scissor dynamic.
+Therefore, the command buffer must set both values before drawing:
 
 ```zig
 vk.vkCmdSetViewport(...)
 vk.vkCmdSetScissor(...)
 ```
 
-If either command is omitted, the pipeline has required dynamic state that was never provided.
+If either command is omitted, the pipeline has required dynamic state that was
+never provided.
 
 The viewport uses floating-point dimensions:
 
@@ -362,7 +395,8 @@ command pool
 logical device
 ```
 
-The command buffer is not destroyed with `vk.vkDestroyCommandBuffer`. It is returned to its pool using:
+The command buffer is not destroyed with `vk.vkDestroyCommandBuffer`. It is
+returned to its pool using:
 
 ```zig
 vk.vkFreeCommandBuffers(...)
@@ -402,7 +436,8 @@ command_pool: vk.VkCommandPool = null,
 command_buffer: vk.VkCommandBuffer = null,
 ```
 
-The handles are nullable because `null` means that Koba does not currently own the corresponding Vulkan object.
+The handles are nullable because `null` means that Koba does not currently own
+the corresponding Vulkan object.
 
 ### Extend `initVulkan`
 
@@ -430,9 +465,13 @@ fn initVulkan(self: *HelloTriangleApplication) !void {
 }
 ```
 
-The command pool requires the logical device and the selected graphics queue-family index. The command buffer requires the command pool and logical device, so this ordering is required.
+The command pool requires the logical device and the selected graphics
+queue-family index. The command buffer requires the command pool and logical
+device, so this ordering is required.
 
-If the existing lesson creates shader modules or other resources between image views and the pipeline, preserve those existing calls and place the command-pool calls after pipeline creation.
+If the existing lesson creates shader modules or other resources between image
+views and the pipeline, preserve those existing calls and place the command-pool
+calls after pipeline creation.
 
 ### Create the command pool
 
@@ -480,7 +519,10 @@ fn createCommandPool(self: *HelloTriangleApplication) !void {
 }
 ```
 
-The command pool is tied to `self.graphics_family`, not directly to `self.graphics_queue`. A queue is obtained from a queue family, and command buffers allocated from this pool are intended for submission to queues in that family.
+The command pool is tied to `self.graphics_family`, not directly to
+`self.graphics_queue`. A queue is obtained from a queue family, and command
+buffers allocated from this pool are intended for submission to queues in that
+family.
 
 ### Allocate a primary command buffer
 
@@ -533,13 +575,17 @@ fn createCommandBuffer(self: *HelloTriangleApplication) !void {
 }
 ```
 
-Unlike the C++ RAII version, the raw C API writes the allocated handle into an output pointer.
+Unlike the C++ RAII version, the raw C API writes the allocated handle into an
+output pointer.
 
-Only one command buffer is allocated because this lesson records one image at a time. A complete renderer will usually allocate one command buffer per frame in flight or per swap-chain image.
+Only one command buffer is allocated because this lesson records one image at a
+time. A complete renderer will usually allocate one command buffer per frame in
+flight or per swap-chain image.
 
 ### Begin and end command-buffer recording
 
-The command buffer must be placed into the recording state before commands are added:
+The command buffer must be placed into the recording state before commands are
+added:
 
 ```zig
 const begin_info = vk.VkCommandBufferBeginInfo{
@@ -630,9 +676,11 @@ fn transitionImageLayout(
 }
 ```
 
-This method uses the swap-chain image handle, not the image-view handle. Layout transitions operate on images.
+This method uses the swap-chain image handle, not the image-view handle. Layout
+transitions operate on images.
 
-The image view is used later when dynamic rendering describes the color attachment.
+The image view is used later when dynamic rendering describes the color
+attachment.
 
 ### Record the rendering commands
 
@@ -813,13 +861,17 @@ swap_chain_image_views[image_index]
 recorded rendering commands
 ```
 
-This matching index is important. Rendering with the image view for one swap-chain image while transitioning another image would produce invalid synchronization and incorrect output.
+This matching index is important. Rendering with the image view for one
+swap-chain image while transitioning another image would produce invalid
+synchronization and incorrect output.
 
 ### Why `errdefer` is used while recording
 
-Once `vkBeginCommandBuffer` succeeds, an error during recording can leave the command buffer in the recording state.
+Once `vkBeginCommandBuffer` succeeds, an error during recording can leave the
+command buffer in the recording state.
 
-The `errdefer` block attempts to end recording if a later helper returns an error:
+The `errdefer` block attempts to end recording if a later helper returns an
+error:
 
 ```zig
 errdefer {
@@ -827,9 +879,11 @@ errdefer {
 }
 ```
 
-This is useful for a teaching implementation because it keeps the command buffer from being left open on ordinary error paths.
+This is useful for a teaching implementation because it keeps the command buffer
+from being left open on ordinary error paths.
 
-A production renderer may reset the command buffer explicitly after a failed recording attempt. The exact recovery strategy depends on the frame scheduler.
+A production renderer may reset the command buffer explicitly after a failed
+recording attempt. The exact recovery strategy depends on the frame scheduler.
 
 ### Reset before recording again
 
@@ -868,7 +922,9 @@ try self.resetCommandBuffer();
 try self.recordCommandBuffer(image_index);
 ```
 
-Do not reset a command buffer while the GPU is still executing it. A fence or another synchronization mechanism must first prove that the previous submission has completed.
+Do not reset a command buffer while the GPU is still executing it. A fence or
+another synchronization mechanism must first prove that the previous submission
+has completed.
 
 ### Free the command buffer and destroy the command pool
 
@@ -903,7 +959,8 @@ fn destroyCommandResources(
 }
 ```
 
-Call this helper from the existing `cleanup()` method before destroying the logical device:
+Call this helper from the existing `cleanup()` method before destroying the
+logical device:
 
 ```zig
 fn cleanup(self: *HelloTriangleApplication) void {
@@ -925,9 +982,12 @@ fn cleanup(self: *HelloTriangleApplication) void {
 }
 ```
 
-The exact position relative to the graphics pipeline depends on which Vulkan objects the command buffer may reference. The important rule is that the command buffer must no longer be in use before its pool or device is destroyed.
+The exact position relative to the graphics pipeline depends on which Vulkan
+objects the command buffer may reference. The important rule is that the command
+buffer must no longer be in use before its pool or device is destroyed.
 
-If the application waits for the device to become idle during shutdown, that wait should happen before freeing command buffers:
+If the application waits for the device to become idle during shutdown, that
+wait should happen before freeing command buffers:
 
 ```zig
 const result = vk.vkDeviceWaitIdle(self.device);
@@ -940,7 +1000,8 @@ Keep the project's existing cleanup policy if it already performs this wait.
 
 ### Complete command-buffer additions to merge into `src/main.zig`
 
-The following is the command-buffer-specific portion to add inside the existing `HelloTriangleApplication` struct:
+The following is the command-buffer-specific portion to add inside the existing
+`HelloTriangleApplication` struct:
 
 ```zig
 command_pool: vk.VkCommandPool = null,
@@ -1265,13 +1326,16 @@ Add this call to cleanup before destroying the logical device:
 self.destroyCommandResources();
 ```
 
-The surrounding fields and methods remain those already present in `src/main.zig`.
+The surrounding fields and methods remain those already present in
+`src/main.zig`.
 
 ### Important dynamic-rendering compatibility note
 
-The command-buffer code above uses dynamic rendering. Therefore, the graphics pipeline must also have been created for dynamic rendering.
+The command-buffer code above uses dynamic rendering. Therefore, the graphics
+pipeline must also have been created for dynamic rendering.
 
-The pipeline creation code normally places a `VkPipelineRenderingCreateInfo` structure in the pipeline create-info `pNext` chain:
+The pipeline creation code normally places a `VkPipelineRenderingCreateInfo`
+structure in the pipeline create-info `pNext` chain:
 
 ```zig
 const pipeline_rendering_info = vk.VkPipelineRenderingCreateInfo{
@@ -1293,11 +1357,15 @@ The pipeline create info then uses:
 .subpass = 0,
 ```
 
-If the existing project instead uses a traditional render pass, replace the dynamic-rendering commands with the corresponding render-pass and framebuffer commands. The two approaches are alternatives, not interchangeable command sequences.
+If the existing project instead uses a traditional render pass, replace the
+dynamic-rendering commands with the corresponding render-pass and framebuffer
+commands. The two approaches are alternatives, not interchangeable command
+sequences.
 
 ### Likely issue: `VkClearValue` union syntax
 
-Raw translated C unions can appear slightly differently depending on the exact Zig translate-C output. The intended structure is:
+Raw translated C unions can appear slightly differently depending on the exact
+Zig translate-C output. The intended structure is:
 
 ```zig
 vk.VkClearValue{
@@ -1307,7 +1375,9 @@ vk.VkClearValue{
 }
 ```
 
-If the generated binding exposes the union members under a different translated spelling, inspect the generated `vulkan` module. Do not replace the raw Vulkan type with a wrapper-library clear-value type.
+If the generated binding exposes the union members under a different translated
+spelling, inspect the generated `vulkan` module. Do not replace the raw Vulkan
+type with a wrapper-library clear-value type.
 
 The Vulkan field names in the surrounding structures must remain the C names:
 
@@ -1322,9 +1392,13 @@ The Vulkan field names in the surrounding structures must remain the C names:
 
 ### Likely issue: synchronization feature support
 
-`vk.vkCmdPipelineBarrier2` is part of Vulkan's synchronization2 functionality. With Vulkan 1.4, the feature is normally available through the core API, but the logical device still needs the relevant feature enabled according to the physical-device feature configuration.
+`vk.vkCmdPipelineBarrier2` is part of Vulkan's synchronization2 functionality.
+With Vulkan 1.4, the feature is normally available through the core API, but the
+logical device still needs the relevant feature enabled according to the
+physical-device feature configuration.
 
-If validation reports that synchronization2 is unavailable, verify the logical-device feature chain and the selected Vulkan API version.
+If validation reports that synchronization2 is unavailable, verify the
+logical-device feature chain and the selected Vulkan API version.
 
 ### Likely issue: the first layout may not be `UNDEFINED`
 
@@ -1334,17 +1408,22 @@ The example uses:
 vk.VK_IMAGE_LAYOUT_UNDEFINED
 ```
 
-for the first transition because the initial contents are discarded by the clear operation.
+for the first transition because the initial contents are discarded by the clear
+operation.
 
-After the first frame, the image will normally be in presentation layout. Once acquisition and submission are implemented, the transition should reflect the actual image state and synchronization supplied by the frame loop.
+After the first frame, the image will normally be in presentation layout. Once
+acquisition and submission are implemented, the transition should reflect the
+actual image state and synchronization supplied by the frame loop.
 
-Do not blindly use `UNDEFINED` if the renderer needs to preserve the old image contents.
+Do not blindly use `UNDEFINED` if the renderer needs to preserve the old image
+contents.
 
 ---
 
 ## Recap & What's Next
 
-This lesson translated the command-buffer portion of the C++ Vulkan tutorial into Zig:
+This lesson translated the command-buffer portion of the C++ Vulkan tutorial
+into Zig:
 
 ```cpp
 vk::raii::CommandPool commandPool = nullptr;
@@ -1418,7 +1497,8 @@ Important points:
 - A command buffer must not be reset or freed while the GPU is using it.
 - Image views and swap-chain images must use the same image index.
 - Dynamic rendering must match how the graphics pipeline was created.
-- Command buffers must be freed before their command pool and before the logical device.
+- Command buffers must be freed before their command pool and before the logical
+  device.
 
 Next, Koba can add the frame loop:
 

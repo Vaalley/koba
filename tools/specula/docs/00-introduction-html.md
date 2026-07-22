@@ -2,7 +2,8 @@
 
 ## Overview
 
-The previous lessons built the resources that a renderer needs before it can describe actual drawing:
+The previous lessons built the resources that a renderer needs before it can
+describe actual drawing:
 
 1. Koba creates an SDL3 window.
 2. Vulkan creates an instance.
@@ -19,9 +20,12 @@ This lesson adds the next initialization step:
 createGraphicsPipeline()
 ```
 
-At this point, the method is intentionally empty. The purpose of this lesson is to connect it to the existing Vulkan initialization sequence without pretending that a graphics pipeline already exists.
+At this point, the method is intentionally empty. The purpose of this lesson is
+to connect it to the existing Vulkan initialization sequence without pretending
+that a graphics pipeline already exists.
 
-A graphics pipeline will eventually describe how Vulkan transforms vertices into pixels. It will include information such as:
+A graphics pipeline will eventually describe how Vulkan transforms vertices into
+pixels. It will include information such as:
 
 - vertex and fragment shader stages,
 - vertex input,
@@ -32,7 +36,9 @@ A graphics pipeline will eventually describe how Vulkan transforms vertices into
 - color blending,
 - the render-pass relationship.
 
-The pipeline cannot be created yet because later lessons still need to introduce shader modules, render passes, and pipeline-layout information. For now, Koba adds the correct extension point to `HelloTriangleApplication`.
+The pipeline cannot be created yet because later lessons still need to introduce
+shader modules, render passes, and pipeline-layout information. For now, Koba
+adds the correct extension point to `HelloTriangleApplication`.
 
 ---
 
@@ -40,7 +46,9 @@ The pipeline cannot be created yet because later lessons still need to introduce
 
 ### Why the graphics pipeline belongs after image views
 
-A graphics pipeline is not an isolated Vulkan object. It describes how rendering will happen, so it must eventually agree with the render targets and resources used by the rest of the engine.
+A graphics pipeline is not an isolated Vulkan object. It describes how rendering
+will happen, so it must eventually agree with the render targets and resources
+used by the rest of the engine.
 
 The initialization dependency will become:
 
@@ -64,9 +72,12 @@ pipeline layout
 graphics pipeline
 ```
 
-The pipeline is placed after image-view creation in the current tutorial because image views identify the swap-chain images that will eventually be used by framebuffers.
+The pipeline is placed after image-view creation in the current tutorial because
+image views identify the swap-chain images that will eventually be used by
+framebuffers.
 
-A graphics pipeline does not render directly to an SDL window. The eventual rendering path will look more like:
+A graphics pipeline does not render directly to an SDL window. The eventual
+rendering path will look more like:
 
 ```text
 acquire swap-chain image
@@ -84,15 +95,20 @@ end render pass
 present swap-chain image
 ```
 
-This is why the empty method is still useful now: it establishes the correct place in the resource-creation sequence.
+This is why the empty method is still useful now: it establishes the correct
+place in the resource-creation sequence.
 
 ### A pipeline is a large immutable rendering description
 
-Vulkan moves many rendering decisions into an explicitly created pipeline object. This has an important trade-off.
+Vulkan moves many rendering decisions into an explicitly created pipeline
+object. This has an important trade-off.
 
-The benefit is predictability and performance. Once a pipeline exists, Vulkan does not need to infer or repeatedly validate every rendering choice during each draw call.
+The benefit is predictability and performance. Once a pipeline exists, Vulkan
+does not need to infer or repeatedly validate every rendering choice during each
+draw call.
 
-The cost is that changing some rendering behavior may require creating another pipeline. For example, changing:
+The cost is that changing some rendering behavior may require creating another
+pipeline. For example, changing:
 
 - shaders,
 - blend state,
@@ -102,7 +118,8 @@ The cost is that changing some rendering behavior may require creating another p
 
 can require a different pipeline.
 
-Game engines commonly manage several pipelines for different materials, object types, or rendering passes.
+Game engines commonly manage several pipelines for different materials, object
+types, or rendering passes.
 
 ### Why the method should already return `!void`
 
@@ -122,15 +139,18 @@ fn createGraphicsPipeline(self: *HelloTriangleApplication) void {
 }
 ```
 
-However, Vulkan pipeline creation will return `VkResult`, and shader-module creation, pipeline-layout creation, and allocation can also fail.
+However, Vulkan pipeline creation will return `VkResult`, and shader-module
+creation, pipeline-layout creation, and allocation can also fail.
 
-Using `!void` now means the method already has the correct shape for the next lessons:
+Using `!void` now means the method already has the correct shape for the next
+lessons:
 
 ```zig
 fn createGraphicsPipeline(self: *HelloTriangleApplication) !void
 ```
 
-When the implementation becomes real, failures can use explicit error names such as:
+When the implementation becomes real, failures can use explicit error names such
+as:
 
 ```zig
 return error.FailedToCreateShaderModule;
@@ -138,7 +158,8 @@ return error.FailedToCreatePipelineLayout;
 return error.FailedToCreateGraphicsPipeline;
 ```
 
-The caller propagates those failures with `try`, matching the error-handling style already used by instance, device, swap-chain, and image-view creation.
+The caller propagates those failures with `try`, matching the error-handling
+style already used by instance, device, swap-chain, and image-view creation.
 
 ### Raw Vulkan bindings remain the project boundary
 
@@ -175,11 +196,14 @@ Every result-returning Vulkan function must be checked explicitly against:
 vk.VK_SUCCESS
 ```
 
-That rule is especially important for pipeline creation because a pipeline may fail due to invalid shader code, unsupported features, incompatible render-pass state, or an incorrectly configured pipeline description.
+That rule is especially important for pipeline creation because a pipeline may
+fail due to invalid shader code, unsupported features, incompatible render-pass
+state, or an incorrectly configured pipeline description.
 
 ### Pipeline cleanup will be part of the existing cleanup order
 
-The graphics pipeline will depend on the logical device. Therefore it must be destroyed before the device:
+The graphics pipeline will depend on the logical device. Therefore it must be
+destroyed before the device:
 
 ```text
 graphics pipeline
@@ -194,9 +218,12 @@ SDL window
 SDL
 ```
 
-The exact order between the pipeline and pipeline layout should follow the objects' dependencies. In general, destroy objects that use a resource before destroying that resource.
+The exact order between the pipeline and pipeline layout should follow the
+objects' dependencies. In general, destroy objects that use a resource before
+destroying that resource.
 
-As with the swap chain and image views, cleanup should be explicit and guarded by nullable handle state:
+As with the swap chain and image views, cleanup should be explicit and guarded
+by nullable handle state:
 
 ```zig
 if (self.graphics_pipeline != null) {
@@ -205,7 +232,8 @@ if (self.graphics_pipeline != null) {
 }
 ```
 
-The current source lesson does not create a pipeline yet, so no destruction code should be added until the corresponding handle is actually stored.
+The current source lesson does not create a pipeline yet, so no destruction code
+should be added until the corresponding handle is actually stored.
 
 ---
 
@@ -243,13 +271,16 @@ fn initVulkan(self: *HelloTriangleApplication) !void {
 }
 ```
 
-The `try` keywords are necessary because each method returns an error union. If one initialization step fails, Zig immediately returns that error to the caller instead of continuing with partially initialized Vulkan state.
+The `try` keywords are necessary because each method returns an error union. If
+one initialization step fails, Zig immediately returns that error to the caller
+instead of continuing with partially initialized Vulkan state.
 
 The ordering is important:
 
 - `createSwapChain` needs the surface, physical device, and logical device.
 - `createImageViews` needs the swap-chain images.
-- The future graphics pipeline will depend on later rendering objects associated with those images.
+- The future graphics pipeline will depend on later rendering objects associated
+  with those images.
 
 ### Add the graphics-pipeline method
 
@@ -266,12 +297,15 @@ fn createGraphicsPipeline(self: *HelloTriangleApplication) !void {
 }
 ```
 
-This is the direct Zig translation of the empty C++ method, with two project-specific improvements:
+This is the direct Zig translation of the empty C++ method, with two
+project-specific improvements:
 
 1. It uses `!void` so future Vulkan failures can be propagated.
 2. It logs through `std.log.debug`, matching the existing application style.
 
-The `_ = self;` statement makes it explicit that this first placeholder does not yet use the application state. Without it, Zig may report that the parameter is unused.
+The `_ = self;` statement makes it explicit that this first placeholder does not
+yet use the application state. Without it, Zig may report that the parameter is
+unused.
 
 ### A shorter placeholder is also valid
 
@@ -283,20 +317,25 @@ fn createGraphicsPipeline(self: *HelloTriangleApplication) !void {
 }
 ```
 
-The logged version is generally more useful during engine development because it confirms that initialization reached this stage.
+The logged version is generally more useful during engine development because it
+confirms that initialization reached this stage.
 
 ### Do not create fake pipeline state yet
 
-Do not add fields such as these until the corresponding Vulkan objects are actually created:
+Do not add fields such as these until the corresponding Vulkan objects are
+actually created:
 
 ```zig
 graphics_pipeline: vk.VkPipeline = null,
 pipeline_layout: vk.VkPipelineLayout = null,
 ```
 
-Those fields will be needed in a later lesson, but adding them prematurely can make cleanup misleading. A nullable Vulkan handle should represent an object that the application may actually own, not an object that is merely planned.
+Those fields will be needed in a later lesson, but adding them prematurely can
+make cleanup misleading. A nullable Vulkan handle should represent an object
+that the application may actually own, not an object that is merely planned.
 
-When the pipeline lesson introduces real creation, the fields can be added near the image-view and swap-chain fields:
+When the pipeline lesson introduces real creation, the fields can be added near
+the image-view and swap-chain fields:
 
 ```zig
 graphics_pipeline: vk.VkPipeline = null,
@@ -307,7 +346,8 @@ The cleanup method can then destroy them before destroying their dependencies.
 
 ### Complete lesson-specific code to merge into `src/main.zig`
 
-The following is the complete code change for this lesson. It assumes that the earlier lessons already provide the existing `HelloTriangleApplication` methods:
+The following is the complete code change for this lesson. It assumes that the
+earlier lessons already provide the existing `HelloTriangleApplication` methods:
 
 ```zig
 const HelloTriangleApplication = struct {
@@ -391,7 +431,9 @@ if (result != vk.VK_SUCCESS) {
 }
 ```
 
-This code is intentionally not part of the current placeholder implementation because `pipeline_create_info` cannot be built correctly until the tutorial introduces:
+This code is intentionally not part of the current placeholder implementation
+because `pipeline_create_info` cannot be built correctly until the tutorial
+introduces:
 
 - shader modules,
 - a pipeline layout,
@@ -403,7 +445,8 @@ This code is intentionally not part of the current placeholder implementation be
 - multisampling state,
 - color-blend state.
 
-Creating a partial pipeline description now would be more confusing than helpful and would not produce a valid renderer.
+Creating a partial pipeline description now would be more confusing than helpful
+and would not produce a valid renderer.
 
 ---
 
@@ -440,6 +483,10 @@ Important points:
 - `try` propagates initialization errors through `initVulkan`.
 - The implementation uses the existing `HelloTriangleApplication`.
 - The code uses raw Vulkan bindings and does not introduce proxy objects.
-- Pipeline state and cleanup handles should be added only when actual pipeline objects are created.
+- Pipeline state and cleanup handles should be added only when actual pipeline
+  objects are created.
 
-Next, Koba can begin building the graphics pipeline itself. The first required piece is usually shader support: loading SPIR-V bytecode and creating Vulkan shader modules. After that, the engine can define the pipeline layout, render pass, fixed-function state, and finally call `vk.vkCreateGraphicsPipelines`.
+Next, Koba can begin building the graphics pipeline itself. The first required
+piece is usually shader support: loading SPIR-V bytecode and creating Vulkan
+shader modules. After that, the engine can define the pipeline layout, render
+pass, fixed-function state, and finally call `vk.vkCreateGraphicsPipelines`.

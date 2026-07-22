@@ -17,7 +17,9 @@ The previous Koba lessons created a swap chain and its image views:
 9. Koba records and submits rendering commands.
 10. Koba presents an image.
 
-A swap chain is tied to the window's drawable size and surface capabilities. If the window is resized, minimized, moved between displays, or otherwise changes presentation conditions, the existing swap chain may no longer be usable.
+A swap chain is tied to the window's drawable size and surface capabilities. If
+the window is resized, minimized, moved between displays, or otherwise changes
+presentation conditions, the existing swap chain may no longer be usable.
 
 The renderer must then:
 
@@ -47,7 +49,8 @@ vk.VK_ERROR_OUT_OF_DATE_KHR
 vk.VK_SUBOPTIMAL_KHR
 ```
 
-This lesson translates the C++ swap-chain recreation code into Zig 0.16.0 using Koba's existing `HelloTriangleApplication` in `src/main.zig`.
+This lesson translates the C++ swap-chain recreation code into Zig 0.16.0 using
+Koba's existing `HelloTriangleApplication` in `src/main.zig`.
 
 Koba uses raw translated C bindings:
 
@@ -72,7 +75,9 @@ SDL3 supplies window events and drawable-pixel sizes.
 
 ### Why swap-chain recreation is necessary
 
-The swap chain contains images with a specific size, format, and presentation configuration. These properties come from the surface and the window's current state.
+The swap chain contains images with a specific size, format, and presentation
+configuration. These properties come from the surface and the window's current
+state.
 
 For example, a window may begin at:
 
@@ -86,7 +91,9 @@ After resizing, it may become:
 1920 × 1080 pixels
 ```
 
-The old swap-chain images still have the original dimensions. Vulkan cannot automatically resize those images because they are already Vulkan objects owned by the old swap chain.
+The old swap-chain images still have the original dimensions. Vulkan cannot
+automatically resize those images because they are already Vulkan objects owned
+by the old swap chain.
 
 The renderer must replace them:
 
@@ -119,13 +126,16 @@ Vulkan distinguishes two common presentation results.
 
 #### `VK_ERROR_OUT_OF_DATE_KHR`
 
-The swap chain can no longer be used with the surface. The renderer must recreate it before continuing.
+The swap chain can no longer be used with the surface. The renderer must
+recreate it before continuing.
 
 This commonly occurs when the window size changes between frames.
 
 #### `VK_SUBOPTIMAL_KHR`
 
-The swap chain can still be used, but it is not an ideal match for the current surface. The application may continue rendering, but recreating the swap chain is usually the better choice.
+The swap chain can still be used, but it is not an ideal match for the current
+surface. The application may continue rendering, but recreating the swap chain
+is usually the better choice.
 
 A useful policy is:
 
@@ -136,7 +146,8 @@ SUCCESS      -> continue normally
 other error  -> report failure
 ```
 
-The result must be checked explicitly. Raw C Vulkan bindings do not throw exceptions or convert result codes into Zig errors automatically.
+The result must be checked explicitly. Raw C Vulkan bindings do not throw
+exceptions or convert result codes into Zig errors automatically.
 
 ### Why the device must be idle before destruction
 
@@ -165,7 +176,10 @@ vk.vkDeviceWaitIdle(self.device)
 
 This blocks the CPU until all work submitted to the logical device has finished.
 
-The trade-off is that waiting for the entire device is simple but not the most efficient solution. A more advanced renderer may wait on specific fences or track resource lifetimes more precisely. For a learning engine and a resize operation, device-wide waiting is clear and safe.
+The trade-off is that waiting for the entire device is simple but not the most
+efficient solution. A more advanced renderer may wait on specific fences or
+track resource lifetimes more precisely. For a learning engine and a resize
+operation, device-wide waiting is clear and safe.
 
 ### Raw C cleanup is different from C++ RAII cleanup
 
@@ -176,7 +190,8 @@ swapChainImageViews.clear();
 swapChain = nullptr;
 ```
 
-In a Vulkan-Hpp RAII application, clearing a container of RAII objects destroys the contained image views.
+In a Vulkan-Hpp RAII application, clearing a container of RAII objects destroys
+the contained image views.
 
 Koba stores raw Vulkan handles:
 
@@ -185,7 +200,8 @@ swap_chain_image_views: []vk.VkImageView
 swap_chain: vk.VkSwapchainKHR
 ```
 
-Assigning an empty slice or `null` does not destroy anything. Zig does not automatically call Vulkan destruction functions for raw handles.
+Assigning an empty slice or `null` does not destroy anything. Zig does not
+automatically call Vulkan destruction functions for raw handles.
 
 The raw-binding translation must explicitly call:
 
@@ -210,7 +226,8 @@ swap chain
 logical device
 ```
 
-An image view refers to a swap-chain image, and the swap-chain owns those images. Therefore destroy image views before destroying the swap chain.
+An image view refers to a swap-chain image, and the swap-chain owns those
+images. Therefore destroy image views before destroying the swap chain.
 
 The complete cleanup order remains:
 
@@ -227,7 +244,9 @@ SDL window
 SDL
 ```
 
-When recreating only the swap chain, Koba destroys only the resources that depend on the swap chain. The logical device, surface, instance, and SDL window remain alive.
+When recreating only the swap chain, Koba destroys only the resources that
+depend on the swap chain. The logical device, surface, instance, and SDL window
+remain alive.
 
 ### Swap-chain recreation may affect more than image views
 
@@ -238,7 +257,8 @@ swap chain
 image views
 ```
 
-A complete renderer may also need to recreate resources that depend on the swap-chain format or extent, such as:
+A complete renderer may also need to recreate resources that depend on the
+swap-chain format or extent, such as:
 
 - depth images and depth image views,
 - framebuffers,
@@ -247,7 +267,9 @@ A complete renderer may also need to recreate resources that depend on the swap-
 - command buffers containing old render areas,
 - per-image synchronization data.
 
-Dynamic rendering reduces some framebuffer management, but it does not eliminate all extent-dependent state. If a command buffer records the old swap-chain extent, it must be re-recorded after recreation.
+Dynamic rendering reduces some framebuffer management, but it does not eliminate
+all extent-dependent state. If a command buffer records the old swap-chain
+extent, it must be re-recorded after recreation.
 
 The correct dependency rule is:
 
@@ -261,11 +283,15 @@ The frame loop usually acquires a swap-chain image with:
 vk.vkAcquireNextImageKHR(...)
 ```
 
-The result is returned separately from the image index. The image index is valid only when acquisition succeeds or is suboptimal.
+The result is returned separately from the image index. The image index is valid
+only when acquisition succeeds or is suboptimal.
 
-If acquisition returns `VK_ERROR_OUT_OF_DATE_KHR`, there is no image to render into. The renderer must recreate the swap chain and skip the rest of the frame.
+If acquisition returns `VK_ERROR_OUT_OF_DATE_KHR`, there is no image to render
+into. The renderer must recreate the swap chain and skip the rest of the frame.
 
-If acquisition returns `VK_SUBOPTIMAL_KHR`, an image index is normally still returned. The renderer may render this frame, but it should recreate the swap chain.
+If acquisition returns `VK_SUBOPTIMAL_KHR`, an image index is normally still
+returned. The renderer may render this frame, but it should recreate the swap
+chain.
 
 ### Why presentation can request recreation
 
@@ -275,7 +301,8 @@ Presentation also returns a `VkResult`:
 vk.vkQueuePresentKHR(...)
 ```
 
-The swap chain may become out of date after rendering has completed. Therefore both acquisition and presentation must handle:
+The swap chain may become out of date after rendering has completed. Therefore
+both acquisition and presentation must handle:
 
 ```zig
 vk.VK_ERROR_OUT_OF_DATE_KHR
@@ -286,7 +313,8 @@ Checking only acquisition is not sufficient.
 
 ### Resizing and SDL3 events
 
-GLFW uses a callback to set a resize flag. SDL3 normally reports window changes through its event queue.
+GLFW uses a callback to set a resize flag. SDL3 normally reports window changes
+through its event queue.
 
 Koba can set a field when it receives:
 
@@ -294,9 +322,12 @@ Koba can set a field when it receives:
 sdl.SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED
 ```
 
-The pixel-size event is especially useful because Vulkan uses drawable pixels, not merely logical window units.
+The pixel-size event is especially useful because Vulkan uses drawable pixels,
+not merely logical window units.
 
-A resize flag is preferable to recreating the swap chain immediately inside event processing. Recreation should happen at a controlled point in the frame loop, after the current frame's Vulkan work has been handled.
+A resize flag is preferable to recreating the swap chain immediately inside
+event processing. Recreation should happen at a controlled point in the frame
+loop, after the current frame's Vulkan work has been handled.
 
 ### Minimized windows
 
@@ -309,7 +340,9 @@ height = 0
 
 A swap chain cannot be created with a zero extent.
 
-The renderer should wait until SDL reports a positive pixel size. During this period, it should continue processing events so the application remains responsive.
+The renderer should wait until SDL reports a positive pixel size. During this
+period, it should continue processing events so the application remains
+responsive.
 
 The basic strategy is:
 
@@ -321,7 +354,8 @@ while width == 0 or height == 0:
     query drawable size
 ```
 
-This is a special case of swap-chain recreation. It is not an error condition that should terminate the application.
+This is a special case of swap-chain recreation. It is not an error condition
+that should terminate the application.
 
 ## Code Translation Sections
 
@@ -333,7 +367,9 @@ Add a resize flag to the existing struct:
 framebuffer_resized: bool = false,
 ```
 
-For SDL3, the name `framebuffer_resized` is retained because it describes the renderer's meaning: the drawable framebuffer size may no longer match the swap chain.
+For SDL3, the name `framebuffer_resized` is retained because it describes the
+renderer's meaning: the drawable framebuffer size may no longer match the swap
+chain.
 
 The relevant fields can look like this:
 
@@ -362,7 +398,9 @@ const HelloTriangleApplication = struct {
 };
 ```
 
-The existing application may contain additional shader, pipeline, command-buffer, and synchronization fields. Keep those fields and add only the resize state required by this lesson.
+The existing application may contain additional shader, pipeline,
+command-buffer, and synchronization fields. Keep those fields and add only the
+resize state required by this lesson.
 
 ### Process SDL3 resize events
 
@@ -394,7 +432,9 @@ fn pollEvents(self: *HelloTriangleApplication) bool {
 
 The event loop returns `false` when SDL requests application shutdown.
 
-The pixel-size event is the important one for Vulkan because the swap chain uses drawable pixel dimensions. Handling `SDL_EVENT_WINDOW_RESIZED` as well is useful because different window-system situations may produce different SDL events.
+The pixel-size event is the important one for Vulkan because the swap chain uses
+drawable pixel dimensions. Handling `SDL_EVENT_WINDOW_RESIZED` as well is useful
+because different window-system situations may produce different SDL events.
 
 The main loop can use the method like this:
 
@@ -404,7 +444,8 @@ while (app.pollEvents()) {
 }
 ```
 
-If the existing entrypoint already processes events, merge the two resize cases into that event loop instead of creating a second event-processing architecture.
+If the existing entrypoint already processes events, merge the two resize cases
+into that event loop instead of creating a second event-processing architecture.
 
 ### Destroy swap-chain-dependent resources
 
@@ -445,15 +486,18 @@ fn cleanupSwapChain(self: *HelloTriangleApplication) void {
 }
 ```
 
-This method translates the C++ `cleanupSwapChain` concept into explicit raw Vulkan cleanup.
+This method translates the C++ `cleanupSwapChain` concept into explicit raw
+Vulkan cleanup.
 
 Important details:
 
 - `vk.vkDestroyImageView` destroys each image view.
 - The allocator-owned image-view slice is freed separately.
 - `vk.vkDestroySwapchainKHR` destroys the swap chain.
-- Swap-chain image handles must not be destroyed individually. They are owned by the swap chain.
-- The image-handle slice is still application-owned memory, so Koba must free it.
+- Swap-chain image handles must not be destroyed individually. They are owned by
+  the swap chain.
+- The image-handle slice is still application-owned memory, so Koba must free
+  it.
 
 The order is intentional:
 
@@ -464,7 +508,8 @@ destroy swap chain
 free image slice
 ```
 
-The image views must be destroyed before the swap chain that owns their underlying images.
+The image views must be destroyed before the swap chain that owns their
+underlying images.
 
 ### Recreate the swap chain
 
@@ -513,7 +558,8 @@ createImageViews();
 
 The Zig version adds explicit error handling and cleanup protection.
 
-If `createSwapChain()` succeeds but `createImageViews()` fails, the `errdefer` calls `cleanupSwapChain()` so the partially recreated resources do not leak.
+If `createSwapChain()` succeeds but `createImageViews()` fails, the `errdefer`
+calls `cleanupSwapChain()` so the partially recreated resources do not leak.
 
 If later lessons add extent-dependent resources, extend this method:
 
@@ -525,7 +571,8 @@ try self.createFramebuffers();
 try self.recordCommandBuffers();
 ```
 
-The exact list depends on which objects the existing project has already created.
+The exact list depends on which objects the existing project has already
+created.
 
 ### Wait for a usable drawable size
 
@@ -567,15 +614,20 @@ fn waitForDrawableSize(self: *HelloTriangleApplication) !void {
 }
 ```
 
-This method uses `SDL_GetWindowSizeInPixels`, not a logical-size query. Vulkan needs the actual drawable pixel extent.
+This method uses `SDL_GetWindowSizeInPixels`, not a logical-size query. Vulkan
+needs the actual drawable pixel extent.
 
-The `SDL_Delay(16)` call prevents a minimized-window loop from consuming an entire CPU core. Polling events inside the loop keeps the application responsive while the window has no drawable area.
+The `SDL_Delay(16)` call prevents a minimized-window loop from consuming an
+entire CPU core. Polling events inside the loop keeps the application responsive
+while the window has no drawable area.
 
-A production engine may use a more advanced event wait strategy, but this version is easy to understand and safe for the tutorial.
+A production engine may use a more advanced event wait strategy, but this
+version is easy to understand and safe for the tutorial.
 
 ### Recreate from swap-chain acquisition
 
-The C++ source checks the result from `acquireNextImage`. The raw C Vulkan version can be written as a helper that returns an optional image index:
+The C++ source checks the result from `acquireNextImage`. The raw C Vulkan
+version can be written as a helper that returns an optional image index:
 
 ```zig
 fn acquireSwapChainImage(
@@ -629,13 +681,16 @@ some(image_index) -> render this frame
 null               -> recreation occurred; skip this frame
 ```
 
-`std.math.maxInt(u64)` is the Zig equivalent of the C++ `UINT64_MAX` timeout. It requests an effectively unlimited wait.
+`std.math.maxInt(u64)` is the Zig equivalent of the C++ `UINT64_MAX` timeout. It
+requests an effectively unlimited wait.
 
-The semaphore is supplied by the existing frame-synchronization code. The `null` fence argument means that this example does not use an acquisition fence.
+The semaphore is supplied by the existing frame-synchronization code. The `null`
+fence argument means that this example does not use an acquisition fence.
 
 ### Why acquisition may return an image index on `SUBOPTIMAL`
 
-`VK_SUBOPTIMAL_KHR` is not a complete failure. Vulkan may still provide a usable image index.
+`VK_SUBOPTIMAL_KHR` is not a complete failure. Vulkan may still provide a usable
+image index.
 
 This code marks the swap chain for recreation:
 
@@ -645,9 +700,12 @@ if (result == vk.VK_SUBOPTIMAL_KHR) {
 }
 ```
 
-The current frame may continue using the returned index. The frame loop can recreate after presenting, or before the next frame.
+The current frame may continue using the returned index. The frame loop can
+recreate after presenting, or before the next frame.
 
-A simpler policy is to recreate immediately after acquisition, but then the acquired image and its semaphore state need careful handling. Marking the swap chain for recreation avoids abandoning a partially acquired frame.
+A simpler policy is to recreate immediately after acquisition, but then the
+acquired image and its semaphore state need careful handling. Marking the swap
+chain for recreation avoids abandoning a partially acquired frame.
 
 ### Present the rendered image
 
@@ -713,13 +771,16 @@ The fields retain Vulkan's translated C names:
 .pResults
 ```
 
-The presentation call waits for `render_finished_semaphore`, which should be signaled after rendering has completed.
+The presentation call waits for `render_finished_semaphore`, which should be
+signaled after rendering has completed.
 
-The `pResults` field is `null` because only one swap chain is being presented and the function's return value is sufficient.
+The `pResults` field is `null` because only one swap chain is being presented
+and the function's return value is sufficient.
 
 ### Integrate acquisition and presentation into the frame loop
 
-The exact synchronization fields depend on the existing frame-loop lesson. The control flow should resemble this:
+The exact synchronization fields depend on the existing frame-loop lesson. The
+control flow should resemble this:
 
 ```zig
 fn drawFrame(
@@ -747,7 +808,8 @@ fn drawFrame(
 }
 ```
 
-This method intentionally does not invent a new synchronization architecture. It accepts the semaphores that the existing frame loop already owns.
+This method intentionally does not invent a new synchronization architecture. It
+accepts the semaphores that the existing frame loop already owns.
 
 The important sequence is:
 
@@ -770,7 +832,10 @@ present image
 recreate if required
 ```
 
-If the existing application has per-frame fences, wait for the appropriate fence before acquisition and reset it only when a submission will occur. This avoids the deadlock described in the source lesson: do not reset a fence and then skip submission because acquisition returned `VK_ERROR_OUT_OF_DATE_KHR`.
+If the existing application has per-frame fences, wait for the appropriate fence
+before acquisition and reset it only when a submission will occur. This avoids
+the deadlock described in the source lesson: do not reset a fence and then skip
+submission because acquisition returned `VK_ERROR_OUT_OF_DATE_KHR`.
 
 ### Avoid resetting a fence before a skipped frame
 
@@ -784,7 +849,8 @@ acquisition reports OUT_OF_DATE
 return without submitting
 ```
 
-The fence is now unsignaled, but no submitted work exists that can signal it. The next frame may wait forever.
+The fence is now unsignaled, but no submitted work exists that can signal it.
+The next frame may wait forever.
 
 The safer order is:
 
@@ -811,11 +877,13 @@ Every returned `VkResult` must be checked against:
 vk.VK_SUCCESS
 ```
 
-This synchronization rule is separate from swap-chain recreation, but the two interact whenever acquisition returns `VK_ERROR_OUT_OF_DATE_KHR`.
+This synchronization rule is separate from swap-chain recreation, but the two
+interact whenever acquisition returns `VK_ERROR_OUT_OF_DATE_KHR`.
 
 ### Update the main cleanup method
 
-The existing `cleanup()` method should call `cleanupSwapChain()` before destroying the logical device:
+The existing `cleanup()` method should call `cleanupSwapChain()` before
+destroying the logical device:
 
 ```zig
 fn cleanup(self: *HelloTriangleApplication) void {
@@ -844,17 +912,22 @@ fn cleanup(self: *HelloTriangleApplication) void {
 }
 ```
 
-The exact placement of command-buffer, pipeline, and shader cleanup should follow their dependencies. In particular, all resources using the logical device must be destroyed before:
+The exact placement of command-buffer, pipeline, and shader cleanup should
+follow their dependencies. In particular, all resources using the logical device
+must be destroyed before:
 
 ```zig
 vk.vkDestroyDevice(...)
 ```
 
-If the existing project already calls `cleanupSwapChain()` from `cleanup()`, do not add a second call. Replace the old incomplete implementation with the explicit version above.
+If the existing project already calls `cleanupSwapChain()` from `cleanup()`, do
+not add a second call. Replace the old incomplete implementation with the
+explicit version above.
 
 ### Complete lesson-specific merge example
 
-The following shows the swap-chain-related additions together in the existing application style:
+The following shows the swap-chain-related additions together in the existing
+application style:
 
 ```zig
 const HelloTriangleApplication = struct {
@@ -1085,7 +1158,8 @@ fn createSwapChain(self: *HelloTriangleApplication) !void
 fn createImageViews(self: *HelloTriangleApplication) !void
 ```
 
-They should remain the same raw-binding methods introduced in the earlier swap-chain lesson.
+They should remain the same raw-binding methods introduced in the earlier
+swap-chain lesson.
 
 ## Recap & What's Next
 
@@ -1120,13 +1194,21 @@ Important points:
 
 - A swap chain is tied to the surface and drawable window size.
 - `VK_ERROR_OUT_OF_DATE_KHR` means the swap chain must be recreated.
-- `VK_SUBOPTIMAL_KHR` means recreation is recommended even if the current frame can continue.
+- `VK_SUBOPTIMAL_KHR` means recreation is recommended even if the current frame
+  can continue.
 - Raw Vulkan handles require explicit destruction.
 - Image views must be destroyed before the swap chain.
-- The allocator-owned slices for image views and swap-chain images must also be freed.
-- SDL3 resize events set a flag instead of recreating resources inside event processing.
-- A minimized window may have a zero drawable size and must be handled before creating a new swap chain.
-- The frame loop must avoid resetting a fence if acquisition fails and no submission will follow.
-- Resources such as depth images, framebuffers, command buffers, and pipelines may also need recreation if they depend on the old extent or format.
+- The allocator-owned slices for image views and swap-chain images must also be
+  freed.
+- SDL3 resize events set a flag instead of recreating resources inside event
+  processing.
+- A minimized window may have a zero drawable size and must be handled before
+  creating a new swap chain.
+- The frame loop must avoid resetting a fence if acquisition fails and no
+  submission will follow.
+- Resources such as depth images, framebuffers, command buffers, and pipelines
+  may also need recreation if they depend on the old extent or format.
 
-Next, Koba can make the frame loop fully robust by managing multiple frames in flight, per-image fences, command-buffer re-recording, and synchronization between image acquisition, rendering, and presentation.
+Next, Koba can make the frame loop fully robust by managing multiple frames in
+flight, per-image fences, command-buffer re-recording, and synchronization
+between image acquisition, rendering, and presentation.

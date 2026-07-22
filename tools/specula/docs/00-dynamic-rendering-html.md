@@ -28,7 +28,8 @@ commandBuffer.endRendering();
 commandBuffer.end();
 ```
 
-Koba uses the raw C Vulkan bindings supplied by `addTranslateC`. The equivalent calls are:
+Koba uses the raw C Vulkan bindings supplied by `addTranslateC`. The equivalent
+calls are:
 
 ```zig
 vk.vkBeginCommandBuffer(...)
@@ -61,7 +62,8 @@ transition image to presentation layout
 end command buffer
 ```
 
-This lesson extends the existing `HelloTriangleApplication` in `src/main.zig`. It does not introduce another application type or another module.
+This lesson extends the existing `HelloTriangleApplication` in `src/main.zig`.
+It does not introduce another application type or another module.
 
 The imports remain:
 
@@ -75,7 +77,9 @@ const vk = @import("vulkan");
 
 ### Why command buffers matter
 
-Vulkan does not usually execute drawing commands immediately when the application calls a rendering function. Instead, the application records commands into a command buffer.
+Vulkan does not usually execute drawing commands immediately when the
+application calls a rendering function. Instead, the application records
+commands into a command buffer.
 
 A command buffer is a reusable description of GPU work:
 
@@ -92,7 +96,8 @@ queue submission
 GPU execution
 ```
 
-This separation allows the engine to prepare work ahead of time and submit it efficiently to a graphics queue.
+This separation allows the engine to prepare work ahead of time and submit it
+efficiently to a graphics queue.
 
 For a game engine, command buffers eventually contain commands such as:
 
@@ -104,13 +109,17 @@ For a game engine, command buffers eventually contain commands such as:
 - transitioning images,
 - copying buffers and textures.
 
-The current lesson records the render-target setup. A later lesson can insert the actual pipeline and draw commands between `vk.vkCmdBeginRendering` and `vk.vkCmdEndRendering`.
+The current lesson records the render-target setup. A later lesson can insert
+the actual pipeline and draw commands between `vk.vkCmdBeginRendering` and
+`vk.vkCmdEndRendering`.
 
 ### Why the image layout must change
 
-A Vulkan image can be used in different layouts depending on the operation being performed.
+A Vulkan image can be used in different layouts depending on the operation being
+performed.
 
-The swap-chain image begins in an undefined or presentation layout. Before drawing, it must be in:
+The swap-chain image begins in an undefined or presentation layout. Before
+drawing, it must be in:
 
 ```zig
 vk.VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
@@ -137,7 +146,9 @@ rendering
 presentation layout
 ```
 
-Vulkan requires these transitions to be explicit because the driver may need to perform cache maintenance, memory synchronization, or other layout-specific work.
+Vulkan requires these transitions to be explicit because the driver may need to
+perform cache maintenance, memory synchronization, or other layout-specific
+work.
 
 ### Why synchronization2 is used
 
@@ -183,7 +194,8 @@ vk.VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT
 
 ### Dynamic rendering replaces a render pass for this path
 
-Traditional Vulkan rendering uses a `VkRenderPass` and one or more `VkFramebuffer` objects.
+Traditional Vulkan rendering uses a `VkRenderPass` and one or more
+`VkFramebuffer` objects.
 
 Dynamic rendering describes the attachments directly when recording commands:
 
@@ -193,31 +205,39 @@ vk.VkRenderingInfo
 vk.vkCmdBeginRendering(...)
 ```
 
-This reduces the amount of render-pass and framebuffer setup required for simple rendering paths.
+This reduces the amount of render-pass and framebuffer setup required for simple
+rendering paths.
 
 The trade-offs are:
 
 - **Benefit:** attachment descriptions are closer to the draw commands.
 - **Benefit:** fewer framebuffer objects are needed.
 - **Benefit:** render-target configurations can be easier to change.
-- **Cost:** the physical device and logical device must support dynamic rendering.
-- **Cost:** the graphics pipeline must be created with compatible dynamic-rendering information.
+- **Cost:** the physical device and logical device must support dynamic
+  rendering.
+- **Cost:** the graphics pipeline must be created with compatible
+  dynamic-rendering information.
 
-Vulkan 1.4 includes dynamic rendering as core functionality, but the required device feature still needs to be enabled during logical-device creation.
+Vulkan 1.4 includes dynamic rendering as core functionality, but the required
+device feature still needs to be enabled during logical-device creation.
 
 ### Dynamic rendering does not remove pipeline compatibility
 
-Dynamic rendering removes the need to begin a traditional render pass, but the graphics pipeline still needs to know the formats it will render into.
+Dynamic rendering removes the need to begin a traditional render pass, but the
+graphics pipeline still needs to know the formats it will render into.
 
-When the graphics pipeline was created, the pipeline-rendering information should match the swap-chain format, typically through:
+When the graphics pipeline was created, the pipeline-rendering information
+should match the swap-chain format, typically through:
 
 ```zig
 vk.VkPipelineRenderingCreateInfo
 ```
 
-The command buffer's color attachment must then use a compatible image view and format.
+The command buffer's color attachment must then use a compatible image view and
+format.
 
-Dynamic rendering changes how rendering begins; it does not make pipeline state optional.
+Dynamic rendering changes how rendering begins; it does not make pipeline state
+optional.
 
 ### Why the clear value is stored in the attachment
 
@@ -228,7 +248,8 @@ The attachment description contains:
 .clearValue = clear_value,
 ```
 
-This means that beginning rendering clears the color attachment before draw commands execute.
+This means that beginning rendering clears the color attachment before draw
+commands execute.
 
 The alternative is:
 
@@ -242,7 +263,8 @@ which preserves the previous contents. That is useful for techniques such as:
 - tiled rendering,
 - multiple rendering passes.
 
-For the first frame, clearing is simpler and avoids depending on the previous contents of a swap-chain image.
+For the first frame, clearing is simpler and avoids depending on the previous
+contents of a swap-chain image.
 
 ### Important edge case: `VK_IMAGE_LAYOUT_UNDEFINED`
 
@@ -252,9 +274,11 @@ The source uses:
 .oldLayout = vk.VK_IMAGE_LAYOUT_UNDEFINED
 ```
 
-for the first transition. This is valid when the previous contents do not need to be preserved. The transition is allowed to discard the old image contents.
+for the first transition. This is valid when the previous contents do not need
+to be preserved. The transition is allowed to discard the old image contents.
 
-However, after presenting an image, the next use of that same image should normally use:
+However, after presenting an image, the next use of that same image should
+normally use:
 
 ```zig
 vk.VK_IMAGE_LAYOUT_PRESENT_SRC_KHR
@@ -262,9 +286,13 @@ vk.VK_IMAGE_LAYOUT_PRESENT_SRC_KHR
 
 as the old layout.
 
-A production renderer therefore tracks the current layout of each swap-chain image, or uses a known swap-chain lifecycle where the old layout is guaranteed.
+A production renderer therefore tracks the current layout of each swap-chain
+image, or uses a known swap-chain lifecycle where the old layout is guaranteed.
 
-The simplified code below follows the supplied lesson and uses the source's `UNDEFINED` transition for the initial recording path. Do not assume that this is sufficient for swap-chain recreation or repeated frame reuse without additional layout tracking.
+The simplified code below follows the supplied lesson and uses the source's
+`UNDEFINED` transition for the initial recording path. Do not assume that this
+is sufficient for swap-chain recreation or repeated frame reuse without
+additional layout tracking.
 
 ### Image index validation matters
 
@@ -283,7 +311,8 @@ swap_chain_images[image_index]
         +--> swap_chain_image_views[image_index]
 ```
 
-The Zig method checks the index before accessing either slice. This turns a possible out-of-bounds memory access into an explicit error.
+The Zig method checks the index before accessing either slice. This turns a
+possible out-of-bounds memory access into an explicit error.
 
 ## Code Translation Sections
 
@@ -291,7 +320,8 @@ The Zig method checks the index before accessing either slice. This turns a poss
 
 Dynamic rendering must be enabled when the logical device is created.
 
-For Vulkan 1.4, add the feature structure to the `pNext` chain used by `vk.VkDeviceCreateInfo`:
+For Vulkan 1.4, add the feature structure to the `pNext` chain used by
+`vk.VkDeviceCreateInfo`:
 
 ```zig
 var dynamic_rendering_features = vk.VkPhysicalDeviceDynamicRenderingFeatures{
@@ -311,9 +341,12 @@ var device_create_info = vk.VkDeviceCreateInfo{
 };
 ```
 
-Keep the existing logical-device setup from earlier lessons. Do not replace it with a proxy or wrapper object.
+Keep the existing logical-device setup from earlier lessons. Do not replace it
+with a proxy or wrapper object.
 
-If the existing project already enables dynamic rendering through another feature chain, keep one correctly connected feature structure rather than adding a duplicate.
+If the existing project already enables dynamic rendering through another
+feature chain, keep one correctly connected feature structure rather than adding
+a duplicate.
 
 ### Add the command-recording method
 
@@ -454,7 +487,9 @@ fn recordCommandBuffer(
 }
 ```
 
-The function accepts a command buffer as an argument rather than inventing a new command-buffer architecture. The existing application can pass the command buffer it already allocates and manages.
+The function accepts a command buffer as an argument rather than inventing a new
+command-buffer architecture. The existing application can pass the command
+buffer it already allocates and manages.
 
 ### Record the image-layout transition
 
@@ -540,7 +575,9 @@ The dependency structure contains a pointer:
 .pImageMemoryBarriers = &image_barrier
 ```
 
-That pointer only needs to remain valid while `vk.vkCmdPipelineBarrier2` reads it. The call records the barrier into the command buffer before the local function returns, so a local structure is sufficient.
+That pointer only needs to remain valid while `vk.vkCmdPipelineBarrier2` reads
+it. The call records the barrier into the command buffer before the local
+function returns, so a local structure is sufficient.
 
 The same lifetime rule applies to:
 
@@ -554,7 +591,8 @@ and:
 .pColorAttachments = &attachment_info
 ```
 
-The structures must remain alive during the corresponding Vulkan call, not necessarily until the GPU executes the command.
+The structures must remain alive during the corresponding Vulkan call, not
+necessarily until the GPU executes the command.
 
 ### Adding the future draw commands
 
@@ -568,7 +606,8 @@ vk.vkCmdBeginRendering(command_buffer, &rendering_info);
 vk.vkCmdEndRendering(command_buffer);
 ```
 
-When the graphics pipeline and command-buffer state are ready, the first triangle can be drawn with code similar to:
+When the graphics pipeline and command-buffer state are ready, the first
+triangle can be drawn with code similar to:
 
 ```zig
 vk.vkCmdBindPipeline(
@@ -606,13 +645,16 @@ vk.vkCmdDraw(
 );
 ```
 
-This assumes the earlier fixed-function lesson made viewport and scissor dynamic.
+This assumes the earlier fixed-function lesson made viewport and scissor
+dynamic.
 
-The pipeline must be bound between beginning and ending dynamic rendering. A draw command outside that region does not have a color attachment to write into.
+The pipeline must be bound between beginning and ending dynamic rendering. A
+draw command outside that region does not have a color attachment to write into.
 
 ### Use the method from the existing frame loop
 
-The existing frame loop should pass the acquired swap-chain image index to the recording method:
+The existing frame loop should pass the acquired swap-chain image index to the
+recording method:
 
 ```zig
 try self.recordCommandBuffer(
@@ -621,7 +663,8 @@ try self.recordCommandBuffer(
 );
 ```
 
-The exact synchronization and submission code remains part of the existing application. The important relationship is:
+The exact synchronization and submission code remains part of the existing
+application. The important relationship is:
 
 ```text
 acquire image
@@ -636,11 +679,14 @@ submit command buffer
 present image_index
 ```
 
-The command buffer must be submitted to a queue that can execute graphics commands. The presentation operation must use the same swap-chain image index acquired for this frame.
+The command buffer must be submitted to a queue that can execute graphics
+commands. The presentation operation must use the same swap-chain image index
+acquired for this frame.
 
 ### Complete lesson-specific code to merge into `src/main.zig`
 
-The following is the complete dynamic-rendering code for this lesson. Place both methods inside the existing `HelloTriangleApplication` struct.
+The following is the complete dynamic-rendering code for this lesson. Place both
+methods inside the existing `HelloTriangleApplication` struct.
 
 ```zig
 fn recordCommandBuffer(
@@ -810,7 +856,10 @@ fn transitionImageLayout(
 }
 ```
 
-If the generated Vulkan translation names the synchronization2 flag types differently, use the exact typedef names generated from the installed `vulkan/vulkan.h`. The structure and function names above are the raw Vulkan API names and must not be replaced with proxy-wrapper types.
+If the generated Vulkan translation names the synchronization2 flag types
+differently, use the exact typedef names generated from the installed
+`vulkan/vulkan.h`. The structure and function names above are the raw Vulkan API
+names and must not be replaced with proxy-wrapper types.
 
 ### Common confusion points
 
@@ -828,7 +877,8 @@ and provides:
 .clearValue = clear_value
 ```
 
-Without the clear load operation, the rendering operation may preserve the existing contents instead.
+Without the clear load operation, the rendering operation may preserve the
+existing contents instead.
 
 #### The image view is not the image
 
@@ -844,21 +894,27 @@ The rendering attachment uses:
 .imageView = self.swap_chain_image_views[image_index]
 ```
 
-The image is the storage object. The image view describes how rendering accesses that storage.
+The image is the storage object. The image view describes how rendering accesses
+that storage.
 
 #### Dynamic rendering is not a substitute for synchronization
 
-Dynamic rendering describes the render target. It does not automatically transition image layouts or synchronize previous and future accesses. The explicit `VkImageMemoryBarrier2` calls are still required.
+Dynamic rendering describes the render target. It does not automatically
+transition image layouts or synchronize previous and future accesses. The
+explicit `VkImageMemoryBarrier2` calls are still required.
 
 #### The command buffer is not submitted by this method
 
-`recordCommandBuffer` only records commands. The existing frame loop must submit the command buffer with `vk.vkQueueSubmit` and present the image afterward.
+`recordCommandBuffer` only records commands. The existing frame loop must submit
+the command buffer with `vk.vkQueueSubmit` and present the image afterward.
 
-This separation is useful because recording and execution are different stages in Vulkan's model.
+This separation is useful because recording and execution are different stages
+in Vulkan's model.
 
 ## Recap & What's Next
 
-This lesson translated the C++ command-buffer recording sequence into raw Vulkan calls from Zig 0.16.0:
+This lesson translated the C++ command-buffer recording sequence into raw Vulkan
+calls from Zig 0.16.0:
 
 ```cpp
 commandBuffer.begin({});
@@ -891,14 +947,20 @@ Important points:
 - The swap-chain image is transitioned before rendering.
 - The image view for the acquired image becomes the color attachment.
 - The color attachment is cleared and stored.
-- Dynamic rendering does not require a traditional render pass or framebuffer for this recording path.
-- The graphics pipeline must still be compatible with the dynamic-rendering color format.
-- Vulkan results from `vk.vkBeginCommandBuffer` and `vk.vkEndCommandBuffer` are checked explicitly.
+- Dynamic rendering does not require a traditional render pass or framebuffer
+  for this recording path.
+- The graphics pipeline must still be compatible with the dynamic-rendering
+  color format.
+- Vulkan results from `vk.vkBeginCommandBuffer` and `vk.vkEndCommandBuffer` are
+  checked explicitly.
 - The image index is validated before indexing image and image-view slices.
 - The logical device must enable dynamic rendering.
-- The simplified `UNDEFINED` old layout is suitable only when previous contents may be discarded; repeated frame rendering eventually needs correct layout tracking.
+- The simplified `UNDEFINED` old layout is suitable only when previous contents
+  may be discarded; repeated frame rendering eventually needs correct layout
+  tracking.
 
-Next, Koba can connect this recorded command buffer to synchronization and submission:
+Next, Koba can connect this recorded command buffer to synchronization and
+submission:
 
 ```text
 acquire swap-chain image
@@ -916,4 +978,5 @@ submit with vk.vkQueueSubmit
 present with vk.vkQueuePresentKHR
 ```
 
-After that, the engine can add the graphics-pipeline bind and `vk.vkCmdDraw` call to produce the first visible triangle.
+After that, the engine can add the graphics-pipeline bind and `vk.vkCmdDraw`
+call to produce the first visible triangle.

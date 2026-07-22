@@ -129,7 +129,7 @@ interface TranslateContext {
   budgets: RetrievalBudgets;
   projectFiles: ProjectFile[];
   allReferenceSections: DocsSection[];
-  apiKey: string;
+  apiKey?: string;
 }
 
 async function translateOne(
@@ -192,9 +192,10 @@ async function translateOne(
     return;
   }
 
-  if (!apiKey) {
+  const hasBridge = Boolean(Deno.env.get("PI_TOOL_BRIDGE_URL"));
+  if (!apiKey && !hasBridge) {
     throw new Error(
-      `Missing API key. Provide -k/--api-key or set ${config.apiKeyEnvVar}.`,
+      `Missing API key. Provide -k/--api-key, set ${config.apiKeyEnvVar}, or run inside an active session harness.`,
     );
   }
 
@@ -288,7 +289,12 @@ async function runTranslate(args: Record<string, unknown>): Promise<void> {
   }
   projectFiles.push(...scannedFiles);
 
-  const apiKey = String(args["api-key"] ?? envApiKey(config) ?? "");
+  const explicitApiKey = typeof args["api-key"] === "string" && args["api-key"]
+    ? String(args["api-key"])
+    : undefined;
+  const envKey = envApiKey(config);
+  const hasBridge = Boolean(Deno.env.get("PI_TOOL_BRIDGE_URL"));
+  const apiKey = explicitApiKey ?? (hasBridge ? undefined : envKey);
 
   const ctx: TranslateContext = {
     config,

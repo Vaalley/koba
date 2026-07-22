@@ -4,7 +4,8 @@
 
 ## Overview
 
-The previous Koba lessons created the objects needed to record and submit rendering work:
+The previous Koba lessons created the objects needed to record and submit
+rendering work:
 
 1. SDL3 creates the window.
 2. Vulkan creates an instance.
@@ -22,7 +23,9 @@ The previous Koba lessons created the objects needed to record and submit render
 
 This lesson adds **frames in flight**.
 
-A frame in flight is a frame whose GPU work has been submitted but may not have finished yet. Rather than waiting for every frame to complete before starting the next one, the CPU can prepare a limited number of frames ahead of the GPU.
+A frame in flight is a frame whose GPU work has been submitted but may not have
+finished yet. Rather than waiting for every frame to complete before starting
+the next one, the CPU can prepare a limited number of frames ahead of the GPU.
 
 Koba will use two frames in flight:
 
@@ -71,7 +74,8 @@ Koba uses raw Vulkan handles and allocator-owned Zig slices instead:
 []vk.VkFence
 ```
 
-This lesson extends `HelloTriangleApplication` in `src/main.zig`. It does not introduce a second application type or another module.
+This lesson extends `HelloTriangleApplication` in `src/main.zig`. It does not
+introduce a second application type or another module.
 
 The imports remain:
 
@@ -85,7 +89,8 @@ const vk = @import("vulkan");
 
 ### Why multiple frames can be useful
 
-If the CPU waits for the GPU after every submitted frame, the two devices cannot work independently:
+If the CPU waits for the GPU after every submitted frame, the two devices cannot
+work independently:
 
 ```text
 CPU records frame 0
@@ -96,7 +101,8 @@ GPU executes frame 1
 
 The CPU may spend much of its time idle while the GPU renders.
 
-With multiple frames in flight, the CPU can prepare another frame while the GPU is still processing the previous one:
+With multiple frames in flight, the CPU can prepare another frame while the GPU
+is still processing the previous one:
 
 ```text
 CPU: GPU work for frame 0 | records frame 1 | records frame 2
@@ -112,7 +118,8 @@ There is a trade-off:
 - Each frame may require command buffers, semaphores, and fences.
 - Too many frames can increase memory use and make synchronization harder.
 
-Two frames is a common starting point because it provides overlap without creating a large queue of old input.
+Two frames is a common starting point because it provides overlap without
+creating a large queue of old input.
 
 ### A frame slot is not the same as a swap-chain image
 
@@ -143,7 +150,9 @@ They are selected by different mechanisms:
 - `frame_index` advances predictably with modulo arithmetic.
 - `image_index` is returned by `vk.vkAcquireNextImageKHR`.
 
-Therefore, a command buffer is indexed by `frame_index`, while the render-finished semaphore in the supplied C++ source is indexed by `image_index`.
+Therefore, a command buffer is indexed by `frame_index`, while the
+render-finished semaphore in the supplied C++ source is indexed by
+`image_index`.
 
 Do not replace every index with the same value.
 
@@ -187,13 +196,15 @@ render-finished semaphore
 presentation
 ```
 
-The current source only submits work. A later lesson will pass the render-finished semaphore to `vk.vkQueuePresentKHR`.
+The current source only submits work. A later lesson will pass the
+render-finished semaphore to `vk.vkQueuePresentKHR`.
 
 ### Why fences start signaled
 
 The first call to `drawFrame` waits on `in_flight_fences[0]`.
 
-If the fence began unsignaled, the first frame would wait forever because no previous submission exists to signal it.
+If the fence began unsignaled, the first frame would wait forever because no
+previous submission exists to signal it.
 
 The C++ source creates fences with:
 
@@ -207,7 +218,8 @@ The raw Vulkan translation is:
 .flags = vk.VK_FENCE_CREATE_SIGNALED_BIT,
 ```
 
-This means the first wait succeeds immediately. After the first frame, the fence is reset and associated with the submitted GPU work.
+This means the first wait succeeds immediately. After the first frame, the fence
+is reset and associated with the submitted GPU work.
 
 ### Why the fence is reset after waiting
 
@@ -219,9 +231,12 @@ reset fence
 submit work with that fence
 ```
 
-Waiting confirms that the previous use of the frame slot has completed. Resetting changes the fence back to the unsignaled state so the next queue submission can signal it again.
+Waiting confirms that the previous use of the frame slot has completed.
+Resetting changes the fence back to the unsignaled state so the next queue
+submission can signal it again.
 
-Do not reset the fence before waiting unless the program has another way to guarantee that the GPU is finished with the previous submission.
+Do not reset the fence before waiting unless the program has another way to
+guarantee that the GPU is finished with the previous submission.
 
 ### Command buffers are reused by frame slot
 
@@ -239,9 +254,11 @@ That produces this relationship:
 command_buffers[frame_index]
 ```
 
-The command buffer belongs to the current CPU/GPU frame slot. During that frame, it records commands for whichever swap-chain image Vulkan returns.
+The command buffer belongs to the current CPU/GPU frame slot. During that frame,
+it records commands for whichever swap-chain image Vulkan returns.
 
-This is different from the earlier simplified lesson, which used one command buffer. The old singular field should be replaced by a slice of command buffers.
+This is different from the earlier simplified lesson, which used one command
+buffer. The old singular field should be replaced by a slice of command buffers.
 
 ### Why command-buffer reset must be checked
 
@@ -260,11 +277,13 @@ const result = vk.vkResetCommandBuffer(
 );
 ```
 
-The result must be checked explicitly. Resetting a command buffer that is still in use by the GPU is invalid, which is why the fence is waited on first.
+The result must be checked explicitly. Resetting a command buffer that is still
+in use by the GPU is invalid, which is why the fence is waited on first.
 
 ### The acquire semaphore orders image use
 
-`vk.vkAcquireNextImageKHR` obtains ownership of a usable swap-chain image and signals the supplied semaphore when acquisition is complete.
+`vk.vkAcquireNextImageKHR` obtains ownership of a usable swap-chain image and
+signals the supplied semaphore when acquisition is complete.
 
 The queue submission waits on that semaphore:
 
@@ -272,7 +291,8 @@ The queue submission waits on that semaphore:
 .pWaitSemaphores = &self.present_complete_semaphores[frame_index],
 ```
 
-The queue must not execute color-attachment commands before the acquired image is ready.
+The queue must not execute color-attachment commands before the acquired image
+is ready.
 
 The wait stage is:
 
@@ -280,7 +300,8 @@ The wait stage is:
 vk.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
 ```
 
-This says that the wait must be satisfied before the color-attachment stage begins.
+This says that the wait must be satisfied before the color-attachment stage
+begins.
 
 ### The render-finished semaphore belongs to presentation
 
@@ -290,17 +311,23 @@ The submit operation signals a semaphore after the command buffer completes:
 .pSignalSemaphores = &self.render_finished_semaphores[image_index],
 ```
 
-The next presentation call will wait on that semaphore before displaying the image.
+The next presentation call will wait on that semaphore before displaying the
+image.
 
-The supplied source creates one render-finished semaphore per swap-chain image. That is a valid design, but it is not the only possible design. Another common design creates one render-finished semaphore per frame slot.
+The supplied source creates one render-finished semaphore per swap-chain image.
+That is a valid design, but it is not the only possible design. Another common
+design creates one render-finished semaphore per frame slot.
 
-The important rule is consistency: the semaphore must not be reused while a previous GPU operation may still signal it.
+The important rule is consistency: the semaphore must not be reused while a
+previous GPU operation may still signal it.
 
 ### Swap-chain recreation changes the allocation sizes
 
-The number of swap-chain images can change after window resizing or surface recreation.
+The number of swap-chain images can change after window resizing or surface
+recreation.
 
-When recreating the swap chain, Koba must also recreate any state sized by `swap_chain_images.len`, including:
+When recreating the swap chain, Koba must also recreate any state sized by
+`swap_chain_images.len`, including:
 
 - `render_finished_semaphores`,
 - command buffers if they are allocated per image,
@@ -313,15 +340,19 @@ The frame-slot arrays are different:
 - acquire semaphores have `MAX_FRAMES_IN_FLIGHT` entries,
 - fences have `MAX_FRAMES_IN_FLIGHT` entries.
 
-The render-finished array follows the supplied source and has one entry per swap-chain image.
+The render-finished array follows the supplied source and has one entry per
+swap-chain image.
 
 ### The current source does not present yet
 
 The supplied C++ `drawFrame` ends after `queue.submit`.
 
-A complete frame loop will later call `vk.vkQueuePresentKHR`, waiting on the render-finished semaphore. This lesson intentionally stops at submission so the synchronization roles are clear.
+A complete frame loop will later call `vk.vkQueuePresentKHR`, waiting on the
+render-finished semaphore. This lesson intentionally stops at submission so the
+synchronization roles are clear.
 
-Do not treat a successful queue submission as proof that an image has already appeared on screen. Submission only places the work into the graphics queue.
+Do not treat a successful queue submission as proof that an image has already
+appeared on screen. Submission only places the work into the graphics queue.
 
 ## Code Translation Sections
 
@@ -333,9 +364,11 @@ Add this near the other module-level constants in `src/main.zig`:
 const max_frames_in_flight: usize = 2;
 ```
 
-The name follows Zig's lowercase naming convention while preserving the meaning of the C++ constant.
+The name follows Zig's lowercase naming convention while preserving the meaning
+of the C++ constant.
 
-This is a compile-time value, so it can be used for array sizes and for modulo arithmetic.
+This is a compile-time value, so it can be used for array sizes and for modulo
+arithmetic.
 
 ### Replace the singular command-buffer field
 
@@ -401,11 +434,14 @@ const HelloTriangleApplication = struct {
 };
 ```
 
-The empty slices do not own memory. They are safe initial values for cleanup and error handling. The slices become owned allocations only after their corresponding creation methods succeed.
+The empty slices do not own memory. They are safe initial values for cleanup and
+error handling. The slices become owned allocations only after their
+corresponding creation methods succeed.
 
 ### Extend `initVulkan`
 
-The initialization sequence must create frame resources after the command pool exists:
+The initialization sequence must create frame resources after the command pool
+exists:
 
 ```zig
 fn initVulkan(self: *HelloTriangleApplication) !void {
@@ -424,7 +460,8 @@ fn initVulkan(self: *HelloTriangleApplication) !void {
 }
 ```
 
-Preserve any existing initialization calls from earlier lessons. The important dependencies are:
+Preserve any existing initialization calls from earlier lessons. The important
+dependencies are:
 
 ```text
 logical device
@@ -439,7 +476,8 @@ logical device
 
 ### Allocate command buffers for frames in flight
 
-The C++ code creates `MAX_FRAMES_IN_FLIGHT` primary command buffers. The raw Vulkan translation is:
+The C++ code creates `MAX_FRAMES_IN_FLIGHT` primary command buffers. The raw
+Vulkan translation is:
 
 ```zig
 fn createCommandBuffers(self: *HelloTriangleApplication) !void {
@@ -490,7 +528,9 @@ fn createCommandBuffers(self: *HelloTriangleApplication) !void {
 }
 ```
 
-The command-buffer allocation count is a `u32` in Vulkan. Zig can assign the comptime-known `usize` value here when the translated declaration permits the integer coercion. If the generated binding requires an explicit conversion, use:
+The command-buffer allocation count is a `u32` in Vulkan. Zig can assign the
+comptime-known `usize` value here when the translated declaration permits the
+integer coercion. If the generated binding requires an explicit conversion, use:
 
 ```zig
 .commandBufferCount = @intCast(max_frames_in_flight),
@@ -502,7 +542,8 @@ The output pointer is the beginning of the allocated slice:
 self.command_buffers.ptr
 ```
 
-The slice itself is application memory used to store the returned handles. The command buffers are Vulkan objects owned by the command pool.
+The slice itself is application memory used to store the returned handles. The
+command buffers are Vulkan objects owned by the command pool.
 
 ### Create the synchronization objects
 
@@ -667,11 +708,15 @@ fn createSyncObjects(self: *HelloTriangleApplication) !void {
 }
 ```
 
-The `errdefer` blocks are important because synchronization creation can fail partway through. For example, the first few semaphores may succeed while a later semaphore fails. The already-created Vulkan objects must be destroyed before returning the error.
+The `errdefer` blocks are important because synchronization creation can fail
+partway through. For example, the first few semaphores may succeed while a later
+semaphore fails. The already-created Vulkan objects must be destroyed before
+returning the error.
 
 ### A shorter creation method
 
-If the project already has a reliable cleanup path for partially initialized objects, the creation loops can be shorter:
+If the project already has a reliable cleanup path for partially initialized
+objects, the creation loops can be shorter:
 
 ```zig
 fn createSyncObjects(self: *HelloTriangleApplication) !void {
@@ -694,7 +739,8 @@ fn createSyncObjects(self: *HelloTriangleApplication) !void {
 }
 ```
 
-The longer version is preferable while learning because ownership and partial-failure behavior are explicit.
+The longer version is preferable while learning because ownership and
+partial-failure behavior are explicit.
 
 ### Add the frame index
 
@@ -892,7 +938,8 @@ fn recordCommandBuffer(
 ) !void
 ```
 
-The command buffer is selected by frame slot, while the image index is supplied by Vulkan.
+The command buffer is selected by frame slot, while the image index is supplied
+by Vulkan.
 
 ### Why `VK_SUBOPTIMAL_KHR` is accepted
 
@@ -902,9 +949,12 @@ The acquire operation can return:
 vk.VK_SUBOPTIMAL_KHR
 ```
 
-This means that the swap chain is still usable, but it no longer matches the surface perfectly. For example, a resize may be in progress.
+This means that the swap chain is still usable, but it no longer matches the
+surface perfectly. For example, a resize may be in progress.
 
-The frame can often continue rendering in this situation. A later swap-chain recreation lesson can mark the swap chain for recreation after the current frame.
+The frame can often continue rendering in this situation. A later swap-chain
+recreation lesson can mark the swap chain for recreation after the current
+frame.
 
 By contrast:
 
@@ -912,7 +962,8 @@ By contrast:
 vk.VK_ERROR_OUT_OF_DATE_KHR
 ```
 
-means that the swap chain can no longer be used as-is. The application should recreate it instead of continuing with the old configuration.
+means that the swap chain can no longer be used as-is. The application should
+recreate it instead of continuing with the old configuration.
 
 ### Raw translation of `vk::PipelineStageFlagBits`
 
@@ -930,13 +981,16 @@ The raw C binding uses the Vulkan C constant:
 const wait_stage = vk.VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
 ```
 
-This is not the synchronization2 stage constant. The submit structure here is `VkSubmitInfo`, so it uses the original `VkPipelineStageFlags` type.
+This is not the synchronization2 stage constant. The submit structure here is
+`VkSubmitInfo`, so it uses the original `VkPipelineStageFlags` type.
 
-If a later lesson switches to `VkSubmitInfo2`, it must use the synchronization2 structures and flags consistently rather than mixing the two API forms.
+If a later lesson switches to `VkSubmitInfo2`, it must use the synchronization2
+structures and flags consistently rather than mixing the two API forms.
 
 ### Record the command buffer for the acquired image
 
-The existing command-recording method should receive the frame-selected command buffer and the acquired image index:
+The existing command-recording method should receive the frame-selected command
+buffer and the acquired image index:
 
 ```zig
 try self.recordCommandBuffer(
@@ -970,7 +1024,8 @@ image_index
 
 ### Add cleanup for synchronization objects
 
-Synchronization objects must be destroyed before the logical device is destroyed.
+Synchronization objects must be destroyed before the logical device is
+destroyed.
 
 Add this method:
 
@@ -1027,7 +1082,9 @@ fn destroySyncObjects(self: *HelloTriangleApplication) void {
 }
 ```
 
-The translated handle types may be nullable, as required by the project context. The null checks make cleanup safe when creation failed before every array element was initialized.
+The translated handle types may be nullable, as required by the project context.
+The null checks make cleanup safe when creation failed before every array
+element was initialized.
 
 ### Free command buffers before destroying the command pool
 
@@ -1074,7 +1131,8 @@ vk.vkDestroyCommandPool(...)
 
 ### Extend the existing cleanup order
 
-The existing project cleanup order starts with device-owned objects and ends with SDL:
+The existing project cleanup order starts with device-owned objects and ends
+with SDL:
 
 ```text
 device-owned resources
@@ -1118,7 +1176,9 @@ fn cleanup(self: *HelloTriangleApplication) void {
 }
 ```
 
-If the existing cleanup method already destroys the command pool, insert the two new helper calls immediately before that destruction. Do not destroy the logical device before these resources.
+If the existing cleanup method already destroys the command pool, insert the two
+new helper calls immediately before that destruction. Do not destroy the logical
+device before these resources.
 
 ### Call `drawFrame` from the existing main loop
 
@@ -1140,7 +1200,9 @@ while (running) {
 }
 ```
 
-The exact event-loop variables should follow the existing `src/main.zig`. The important change is that rendering now submits one frame at a time while cycling through the frame slots.
+The exact event-loop variables should follow the existing `src/main.zig`. The
+important change is that rendering now submits one frame at a time while cycling
+through the frame slots.
 
 A later lesson will add:
 
@@ -1148,11 +1210,13 @@ A later lesson will add:
 vk.vkQueuePresentKHR(...)
 ```
 
-after submission and will handle swap-chain recreation when the window changes size.
+after submission and will handle swap-chain recreation when the window changes
+size.
 
 ## Recap & What's Next
 
-This lesson translated the C++ frames-in-flight code into raw Vulkan calls using Zig slices and explicit ownership.
+This lesson translated the C++ frames-in-flight code into raw Vulkan calls using
+Zig slices and explicit ownership.
 
 The main translations were:
 
@@ -1218,8 +1282,13 @@ Important concepts:
 - Semaphores order GPU operations.
 - Fences begin signaled so the first frame can proceed.
 - Command buffers are reset only after their previous GPU work has completed.
-- `VK_SUBOPTIMAL_KHR` can be usable, while `VK_ERROR_OUT_OF_DATE_KHR` generally requires swap-chain recreation.
+- `VK_SUBOPTIMAL_KHR` can be usable, while `VK_ERROR_OUT_OF_DATE_KHR` generally
+  requires swap-chain recreation.
 - Every Vulkan result is checked explicitly.
-- Device-owned synchronization objects and command buffers are destroyed before the logical device.
+- Device-owned synchronization objects and command buffers are destroyed before
+  the logical device.
 
-The next step is to present the rendered image with `vk.vkQueuePresentKHR`. That lesson will connect the render-finished semaphore to presentation and handle the resize and swap-chain-recreation cases that can occur while frames are in flight.
+The next step is to present the rendered image with `vk.vkQueuePresentKHR`. That
+lesson will connect the render-finished semaphore to presentation and handle the
+resize and swap-chain-recreation cases that can occur while frames are in
+flight.

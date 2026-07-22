@@ -59,8 +59,8 @@ The main struct is `App` in `src/main.zig` (renamed from
 - Per-frame sync: `present_complete_semaphores`, `render_finished_semaphores`,
   `in_flight_fences`, `frame_index`
 
-Error handling is via error unions (`!void`) plus two shared helpers instead
-of hand-rolled `VkResult` checks:
+Error handling is via error unions (`!void`) plus two shared helpers instead of
+hand-rolled `VkResult` checks:
 
 ```zig
 // Single-call check: logs the error name + VkResult and returns err on failure.
@@ -78,13 +78,12 @@ const physical_devices = try vkEnumerate(
 defer self.allocator.free(physical_devices);
 ```
 
-Both helpers live in the "Vulkan Helpers" section at the bottom of
-`main.zig`, alongside the other free functions (`debugCallback`,
-`checkRequiredFeatures`, `chooseSwapSurfaceFormat`, `chooseSwapPresentMode`,
-`chooseSwapMinImageCount`) and the small `FpsCounter` struct used to update
-the window title with FPS/frame-time twice per second. New free functions
-that don't need `self` go there too, not as `App` methods with an unused
-`self` parameter.
+Both helpers live in the "Vulkan Helpers" section at the bottom of `main.zig`,
+alongside the other free functions (`debugCallback`, `checkRequiredFeatures`,
+`chooseSwapSurfaceFormat`, `chooseSwapPresentMode`, `chooseSwapMinImageCount`)
+and the small `FpsCounter` struct used to update the window title with
+FPS/frame-time twice per second. New free functions that don't need `self` go
+there too, not as `App` methods with an unused `self` parameter.
 
 Allocation pattern:
 

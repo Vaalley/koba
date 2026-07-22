@@ -15,7 +15,8 @@ The previous lessons prepared the resources needed to begin drawing:
 9. Koba loads shader code and creates a shader module.
 10. Koba creates a pipeline layout.
 
-This lesson connects those pieces by creating a graphics pipeline that uses **Vulkan dynamic rendering**.
+This lesson connects those pieces by creating a graphics pipeline that uses
+**Vulkan dynamic rendering**.
 
 The C++ source provides two structures:
 
@@ -53,7 +54,10 @@ vk::StructureChain<
 };
 ```
 
-C++ Vulkan-Hpp's `StructureChain` automatically links the structures through Vulkan's `pNext` mechanism. Raw Vulkan bindings do not provide that helper. In Zig, Koba creates the two structures directly and assigns the rendering structure to the graphics pipeline's `.pNext` field.
+C++ Vulkan-Hpp's `StructureChain` automatically links the structures through
+Vulkan's `pNext` mechanism. Raw Vulkan bindings do not provide that helper. In
+Zig, Koba creates the two structures directly and assigns the rendering
+structure to the graphics pipeline's `.pNext` field.
 
 The resulting relationship is:
 
@@ -68,7 +72,8 @@ VkGraphicsPipelineCreateInfo
 vk.vkCreateGraphicsPipelines(...)
 ```
 
-Dynamic rendering means the graphics pipeline describes its color attachment formats without referring to a traditional `VkRenderPass`.
+Dynamic rendering means the graphics pipeline describes its color attachment
+formats without referring to a traditional `VkRenderPass`.
 
 ---
 
@@ -76,32 +81,41 @@ Dynamic rendering means the graphics pipeline describes its color attachment for
 
 ### Why dynamic rendering matters
 
-Older Vulkan renderers usually create a `VkRenderPass` first. The graphics pipeline then refers to that render pass through:
+Older Vulkan renderers usually create a `VkRenderPass` first. The graphics
+pipeline then refers to that render pass through:
 
 ```zig
 .renderPass = render_pass
 ```
 
-Dynamic rendering removes that requirement. Instead, the pipeline describes the formats of its attachments through:
+Dynamic rendering removes that requirement. Instead, the pipeline describes the
+formats of its attachments through:
 
 ```zig
 VkPipelineRenderingCreateInfo
 ```
 
-For Koba's first renderer, the pipeline has one color attachment whose format is the swap-chain format:
+For Koba's first renderer, the pipeline has one color attachment whose format is
+the swap-chain format:
 
 ```zig
 .colorAttachmentCount = 1
 .pColorAttachmentFormats = &self.swap_chain_surface_format.format
 ```
 
-This is useful for a game engine because rendering code becomes less tightly coupled to pre-created render-pass objects. Different rendering paths can begin and end rendering with attachment information supplied at command-recording time.
+This is useful for a game engine because rendering code becomes less tightly
+coupled to pre-created render-pass objects. Different rendering paths can begin
+and end rendering with attachment information supplied at command-recording
+time.
 
-The trade-off is that dynamic rendering is still explicit. The format used while beginning rendering must agree with the format declared during pipeline creation. If those formats disagree, pipeline use is invalid.
+The trade-off is that dynamic rendering is still explicit. The format used while
+beginning rendering must agree with the format declared during pipeline
+creation. If those formats disagree, pipeline use is invalid.
 
 ### Dynamic rendering does not remove pipeline state
 
-Dynamic rendering replaces the render-pass relationship; it does not replace the other graphics-pipeline descriptions.
+Dynamic rendering replaces the render-pass relationship; it does not replace the
+other graphics-pipeline descriptions.
 
 The pipeline still needs to describe:
 
@@ -114,11 +128,13 @@ The pipeline still needs to describe:
 - color blending,
 - pipeline layout.
 
-The pipeline is still a large, mostly immutable description of how drawing works.
+The pipeline is still a large, mostly immutable description of how drawing
+works.
 
 ### `pNext` is a linked structure chain
 
-Many Vulkan structures have a `.pNext` field. Vulkan uses this field to attach optional or extended structures.
+Many Vulkan structures have a `.pNext` field. Vulkan uses this field to attach
+optional or extended structures.
 
 In C++ Vulkan-Hpp, this:
 
@@ -154,7 +170,8 @@ var pipeline_create_info = vk.VkGraphicsPipelineCreateInfo{
 };
 ```
 
-The order matters: `rendering_info` must remain alive while Vulkan reads `pipeline_create_info`.
+The order matters: `rendering_info` must remain alive while Vulkan reads
+`pipeline_create_info`.
 
 ### Why `renderPass` is `null`
 
@@ -168,13 +185,17 @@ For a dynamic-rendering pipeline:
 
 The rendering information comes from the structure attached through `.pNext`.
 
-Do not provide both a traditional render pass and dynamic-rendering information for the same pipeline description. The pipeline must use the model selected by the rest of the renderer.
+Do not provide both a traditional render pass and dynamic-rendering information
+for the same pipeline description. The pipeline must use the model selected by
+the rest of the renderer.
 
 ### Vulkan 1.4 and the dynamic-rendering feature
 
-Koba targets Vulkan 1.4, where dynamic rendering is part of the core API. However, the feature still needs to be enabled for the logical device.
+Koba targets Vulkan 1.4, where dynamic rendering is part of the core API.
+However, the feature still needs to be enabled for the logical device.
 
-When creating the logical device, the dynamic-rendering feature structure must be included in the device feature chain:
+When creating the logical device, the dynamic-rendering feature structure must
+be included in the device feature chain:
 
 ```zig
 var dynamic_rendering_features =
@@ -191,9 +212,13 @@ Then attach it to `VkDeviceCreateInfo.pNext`:
 device_create_info.pNext = &dynamic_rendering_features;
 ```
 
-If the existing logical-device creation code already has a `.pNext` chain, add this structure to that chain rather than overwriting the existing head. A Vulkan `pNext` chain is a linked list, so each structure can point to the next structure.
+If the existing logical-device creation code already has a `.pNext` chain, add
+this structure to that chain rather than overwriting the existing head. A Vulkan
+`pNext` chain is a linked list, so each structure can point to the next
+structure.
 
-The exact generated binding may expose the feature member as `.dynamicRendering`, matching the Vulkan C field name.
+The exact generated binding may expose the feature member as
+`.dynamicRendering`, matching the Vulkan C field name.
 
 ### The swap-chain format must match
 
@@ -215,9 +240,12 @@ pipeline color attachment format
 dynamic-rendering color attachment format
 ```
 
-If the swap chain is recreated with a different format, the pipeline may also need to be recreated.
+If the swap chain is recreated with a different format, the pipeline may also
+need to be recreated.
 
-This is one reason game engines commonly group swap-chain-dependent objects together. Image views, framebuffers or dynamic-rendering state, and pipelines may all need to be rebuilt when the window changes.
+This is one reason game engines commonly group swap-chain-dependent objects
+together. Image views, framebuffers or dynamic-rendering state, and pipelines
+may all need to be rebuilt when the window changes.
 
 ### Shader stages use the existing shader-module lesson
 
@@ -228,17 +256,20 @@ vertMain
 fragMain
 ```
 
-The method below uses the existing `createShaderStages()` helper. That helper returns:
+The method below uses the existing `createShaderStages()` helper. That helper
+returns:
 
 ```zig
 [2]vk.VkPipelineShaderStageCreateInfo
 ```
 
-The same `VkShaderModule` can contain both entry points. The stage structures select which function executes for each stage.
+The same `VkShaderModule` can contain both entry points. The stage structures
+select which function executes for each stage.
 
 ### The vertex shader needs no vertex buffer yet
 
-The Slang vertex shader uses `SV_VertexID`. Therefore the first triangle does not need a vertex buffer.
+The Slang vertex shader uses `SV_VertexID`. Therefore the first triangle does
+not need a vertex buffer.
 
 The vertex-input state can be empty:
 
@@ -249,11 +280,13 @@ The vertex-input state can be empty:
 .pVertexAttributeDescriptions = null,
 ```
 
-This is a deliberate temporary design. Later, when Koba adds meshes, the vertex-input state will describe vertex-buffer strides and attribute locations.
+This is a deliberate temporary design. Later, when Koba adds meshes, the
+vertex-input state will describe vertex-buffer strides and attribute locations.
 
 ### Static versus dynamic viewport state
 
-The example below uses a viewport and scissor built from the current swap-chain extent. This keeps the first pipeline straightforward:
+The example below uses a viewport and scissor built from the current swap-chain
+extent. This keeps the first pipeline straightforward:
 
 ```zig
 .viewportCount = 1,
@@ -262,13 +295,17 @@ The example below uses a viewport and scissor built from the current swap-chain 
 .pScissors = &scissor,
 ```
 
-A common alternative is to make viewport and scissor dynamic. In that design, the pipeline stores their count but not their values, and command recording calls `vkCmdSetViewport` and `vkCmdSetScissor`.
+A common alternative is to make viewport and scissor dynamic. In that design,
+the pipeline stores their count but not their values, and command recording
+calls `vkCmdSetViewport` and `vkCmdSetScissor`.
 
-Static state is easier to understand initially. Dynamic state is more flexible for window resizing and is often useful in a production engine.
+Static state is easier to understand initially. Dynamic state is more flexible
+for window resizing and is often useful in a production engine.
 
 ### Cleanup must destroy the pipeline before the device
 
-The pipeline is owned by the logical device. It must be destroyed before the device:
+The pipeline is owned by the logical device. It must be destroyed before the
+device:
 
 ```text
 graphics pipeline
@@ -284,7 +321,9 @@ SDL window
 SDL
 ```
 
-The pipeline layout and shader module are also device-owned objects. The exact order between those objects depends on which objects the pipeline uses, but all must be destroyed before `vk.vkDestroyDevice`.
+The pipeline layout and shader module are also device-owned objects. The exact
+order between those objects depends on which objects the pipeline uses, but all
+must be destroyed before `vk.vkDestroyDevice`.
 
 ---
 
@@ -292,7 +331,8 @@ The pipeline layout and shader module are also device-owned objects. The exact o
 
 ### Add graphics-pipeline state
 
-Add the graphics-pipeline handle to the existing `HelloTriangleApplication` struct:
+Add the graphics-pipeline handle to the existing `HelloTriangleApplication`
+struct:
 
 ```zig
 graphics_pipeline: vk.VkPipeline = null,
@@ -312,7 +352,8 @@ pipeline_layout: vk.VkPipelineLayout = null,
 graphics_pipeline: vk.VkPipeline = null,
 ```
 
-A `null` handle means that the pipeline has not been created or has already been destroyed.
+A `null` handle means that the pipeline has not been created or has already been
+destroyed.
 
 ### Enable dynamic rendering while creating the logical device
 
@@ -346,7 +387,9 @@ var device_create_info = vk.VkDeviceCreateInfo{
 
 Keep the rest of the existing device-creation code unchanged.
 
-If the existing application already uses a feature chain, link the dynamic-rendering structure into that chain instead of replacing the current `.pNext` pointer.
+If the existing application already uses a feature chain, link the
+dynamic-rendering structure into that chain instead of replacing the current
+`.pNext` pointer.
 
 Then check the result as usual:
 
@@ -560,11 +603,13 @@ This method uses the fields and helper introduced by the previous lessons:
 - `self.swap_chain_surface_format`
 - `self.createShaderStages()`
 
-The method therefore extends the existing `HelloTriangleApplication` rather than creating a separate renderer type.
+The method therefore extends the existing `HelloTriangleApplication` rather than
+creating a separate renderer type.
 
 ### Understand the two important structures
 
-The most important part of the method is the connection between these structures:
+The most important part of the method is the connection between these
+structures:
 
 ```zig
 var rendering_info = vk.VkPipelineRenderingCreateInfo{
@@ -595,7 +640,8 @@ The C++ `StructureChain` is translated manually by assigning:
 .pNext = &rendering_info
 ```
 
-The rendering structure must be initialized before the pipeline structure because the pipeline structure stores a pointer to it.
+The rendering structure must be initialized before the pipeline structure
+because the pipeline structure stores a pointer to it.
 
 ### Connect the method to initialization
 
@@ -618,7 +664,9 @@ fn initVulkan(self: *HelloTriangleApplication) !void {
 }
 ```
 
-If the existing project uses a different location for shader-module or pipeline-layout creation, preserve that project's order. The dependency requirements are:
+If the existing project uses a different location for shader-module or
+pipeline-layout creation, preserve that project's order. The dependency
+requirements are:
 
 ```text
 logical device
@@ -630,7 +678,8 @@ logical device
     +--> graphics pipeline
 ```
 
-The swap-chain format and extent must also already be available before pipeline creation.
+The swap-chain format and extent must also already be available before pipeline
+creation.
 
 ### Destroy the graphics pipeline
 
@@ -721,11 +770,14 @@ fn cleanup(self: *HelloTriangleApplication) void {
 }
 ```
 
-Keep any existing cleanup logic that is not shown here. The essential rule is that the graphics pipeline must be destroyed before the logical device.
+Keep any existing cleanup logic that is not shown here. The essential rule is
+that the graphics pipeline must be destroyed before the logical device.
 
 ### Complete lesson-specific target code
 
-The following is the complete target-language portion introduced by this lesson. It is intended to be merged into the existing `src/main.zig` and uses the project's established imports and struct:
+The following is the complete target-language portion introduced by this lesson.
+It is intended to be merged into the existing `src/main.zig` and uses the
+project's established imports and struct:
 
 ```zig
 const std = @import("std");
@@ -943,7 +995,8 @@ const HelloTriangleApplication = struct {
 };
 ```
 
-The surrounding `HelloTriangleApplication` in the project already provides the remaining methods, including:
+The surrounding `HelloTriangleApplication` in the project already provides the
+remaining methods, including:
 
 ```zig
 createShaderStages
@@ -954,13 +1007,15 @@ createImageViews
 cleanup
 ```
 
-No proxy wrapper, alternate module, or separate renderer architecture is introduced.
+No proxy wrapper, alternate module, or separate renderer architecture is
+introduced.
 
 ---
 
 ## Recap & What's Next
 
-This lesson translated the C++ dynamic-rendering pipeline description into raw Vulkan Zig code.
+This lesson translated the C++ dynamic-rendering pipeline description into raw
+Vulkan Zig code.
 
 The C++ structure chain:
 
@@ -993,14 +1048,19 @@ var pipeline_create_info = vk.VkGraphicsPipelineCreateInfo{
 
 Important points:
 
-- Dynamic rendering describes attachment formats without a traditional render pass.
-- `VkPipelineRenderingCreateInfo` is attached through `VkGraphicsPipelineCreateInfo.pNext`.
+- Dynamic rendering describes attachment formats without a traditional render
+  pass.
+- `VkPipelineRenderingCreateInfo` is attached through
+  `VkGraphicsPipelineCreateInfo.pNext`.
 - The color attachment format comes from the existing swap-chain format.
-- The dynamic-rendering feature must be enabled while creating the logical device.
-- Raw Vulkan functions require an output handle and explicit `VkResult` checking.
+- The dynamic-rendering feature must be enabled while creating the logical
+  device.
+- Raw Vulkan functions require an output handle and explicit `VkResult`
+  checking.
 - The graphics pipeline must be destroyed before the logical device.
 - Static viewport and scissor state are used for this first implementation.
-- The pipeline still depends on shader stages, a pipeline layout, and all required fixed-function state.
+- The pipeline still depends on shader stages, a pipeline layout, and all
+  required fixed-function state.
 
 The next step is to create the command infrastructure that uses this pipeline:
 
