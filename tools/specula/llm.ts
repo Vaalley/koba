@@ -4,6 +4,7 @@ import type {
   ProjectFile,
   StdlibSection,
 } from "./fetcher.ts";
+import { fetchWithRetry } from "./fetcher.ts";
 import type { Config } from "./config.ts";
 import { extname } from "@std/path";
 
@@ -175,7 +176,7 @@ export async function translateLesson(
   }
 
   const { system, user } = buildTranslationPrompts(input);
-  const response = await fetch(provider.endpoint, {
+  const response = await fetchWithRetry(provider.endpoint, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -224,13 +225,17 @@ export async function translateLesson(
         if (line.startsWith("data: ")) {
           const data = line.slice("data: ".length);
           if (data !== "[DONE]") {
-            const json = JSON.parse(data) as {
-              choices?: Array<{ delta?: { content?: string } }>;
-            };
-            const delta = json.choices?.[0]?.delta?.content;
-            if (delta) {
-              input.onChunk?.(delta);
-              content += delta;
+            try {
+              const json = JSON.parse(data) as {
+                choices?: Array<{ delta?: { content?: string } }>;
+              };
+              const delta = json.choices?.[0]?.delta?.content;
+              if (delta) {
+                input.onChunk?.(delta);
+                content += delta;
+              }
+            } catch {
+              // Ignore malformed or partial JSON line frame
             }
           }
         }
@@ -246,13 +251,17 @@ export async function translateLesson(
     if (trailing.startsWith("data: ")) {
       const data = trailing.slice("data: ".length);
       if (data !== "[DONE]") {
-        const json = JSON.parse(data) as {
-          choices?: Array<{ delta?: { content?: string } }>;
-        };
-        const delta = json.choices?.[0]?.delta?.content;
-        if (delta) {
-          input.onChunk?.(delta);
-          content += delta;
+        try {
+          const json = JSON.parse(data) as {
+            choices?: Array<{ delta?: { content?: string } }>;
+          };
+          const delta = json.choices?.[0]?.delta?.content;
+          if (delta) {
+            input.onChunk?.(delta);
+            content += delta;
+          }
+        } catch {
+          // Ignore malformed or partial JSON line frame
         }
       }
     }

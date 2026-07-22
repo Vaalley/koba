@@ -233,9 +233,48 @@ function parseTitleFromHtml(input: string, fallback: string): string {
   );
 }
 
+const DEFAULT_USER_AGENT =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) koba-specula/0.1.0";
+
+export async function fetchWithRetry(
+  url: string | URL,
+  init?: RequestInit,
+  retries = 3,
+  backoffMs = 500,
+): Promise<Response> {
+  const headers = new Headers(init?.headers);
+  if (!headers.has("User-Agent")) {
+    headers.set("User-Agent", DEFAULT_USER_AGENT);
+  }
+  const requestInit = { ...init, headers };
+
+  let lastError: Error | null = null;
+  for (let attempt = 0; attempt < retries; attempt++) {
+    try {
+      const response = await fetch(url, requestInit);
+      if (
+        response.ok ||
+        (response.status >= 400 &&
+          response.status < 500 &&
+          response.status !== 429)
+      ) {
+        return response;
+      }
+      lastError = new Error(`HTTP ${response.status} ${response.statusText}`);
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+    }
+    if (attempt < retries - 1) {
+      await new Promise((res) =>
+        setTimeout(res, backoffMs * Math.pow(2, attempt))
+      );
+    }
+  }
+  throw lastError ?? new Error(`Failed to fetch ${url}`);
+}
 async function readSourceText(source: string): Promise<string> {
   if (/^https?:\/\//i.test(source)) {
-    const response = await fetch(source);
+    const response = await fetchWithRetry(source);
     if (!response.ok) {
       throw new Error(
         `Failed to fetch ${source}: ${response.status} ${response.statusText}`,
@@ -303,7 +342,11 @@ function tokenize(input: string): string[] {
     .filter((token) => token.length > 1 && !STOPWORDS.has(token));
 }
 
-function scoreSection(section: DocsSection, queryTokens: string[]): number {
+function scoreSection(
+  section: DocsSection,
+  queryTokens: string[],
+  rawQuery?: string,
+): number {
   const titleTokens = tokenize(section.title);
   const codeTokens = tokenize(section.code ?? "");
   const contentTokens = tokenize(section.content);
@@ -319,23 +362,74 @@ function scoreSection(section: DocsSection, queryTokens: string[]): number {
     (score, token) => score + (contentTokens.includes(token) ? 1 : 0),
     0,
   );
-  return titleScore + codeScore + contentScore;
+  let score = titleScore + codeScore + contentScore;
+  if (rawQuery && rawQuery.trim().length > 2) {
+    const lowerQuery = rawQuery.toLowerCase();
+    if (section.title.toLowerCase().includes(lowerQuery)) {
+      score += 10;
+    } else if (section.content.toLowerCase().includes(lowerQuery)) {
+      score += 4;
+    }
+  }
+  return score;
 }
 
 export function searchLangDocs(
   sections: DocsSection[],
-  query: string,
+  query: string | string[],
   limit = 5,
 ): DocsSection[] {
-  const queryTokens = tokenize(query);
-  return sections
-    .map((section) => ({
-      ...section,
-      score: scoreSection(section, queryTokens),
-    }))
-    .filter((section) => section.score && section.score > 0)
+  const queries = Array.isArray(query) ? query : [query];
+  if (queries.length === 0) return [];
+
+  if (queries.length === 1) {
+    const queryTokens = tokenize(queries[0]);
+    return sections
+      .map((section) => ({
+        ...section,
+        score: scoreSection(section, queryTokens, queries[0]),
+      }))
+      .filter((section) => section.score && section.score > 0)
+      .sort((a, b) =>
+        (b.score ?? 0) - (a.score ?? 0) || a.title.localeCompare(b.title)
+      )
+      .slice(0, limit);
+  }
+
+  const rrfScores = new Map<DocsSection, { rrf: number; raw: number }>();
+
+  for (const q of queries) {
+    const tokens = tokenize(q);
+    if (tokens.length === 0) continue;
+
+    const scored = sections
+      .map((sec) => ({ section: sec, score: scoreSection(sec, tokens, q) }))
+      .filter((item) => item.score > 0)
+      .sort((a, b) =>
+        b.score - a.score || a.section.title.localeCompare(b.section.title)
+      );
+
+    for (let rank = 0; rank < scored.length; rank++) {
+      const { section, score } = scored[rank];
+      const current = rrfScores.get(section) ?? { rrf: 0, raw: 0 };
+      current.rrf += 1 / (60 + rank + 1);
+      current.raw += score;
+      rrfScores.set(section, current);
+    }
+  }
+
+  const combined = Array.from(rrfScores.entries()).map((
+    [section, { rrf, raw }],
+  ) => ({
+    ...section,
+    score: raw,
+    rrfScore: rrf,
+  }));
+
+  return combined
     .sort((a, b) =>
-      (b.score ?? 0) - (a.score ?? 0) || a.title.localeCompare(b.title)
+      b.rrfScore - a.rrfScore || (b.score ?? 0) - (a.score ?? 0) ||
+      a.title.localeCompare(b.title)
     )
     .slice(0, limit);
 }
@@ -459,7 +553,7 @@ export async function loadReferenceSections(
     return [];
   }
 
-  const response = await fetch(config.referenceUrl);
+  const response = await fetchWithRetry(config.referenceUrl);
   if (!response.ok) {
     throw new Error(
       `Failed to fetch reference docs: ${response.status} ${response.statusText}`,

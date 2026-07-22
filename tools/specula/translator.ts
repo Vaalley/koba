@@ -28,7 +28,7 @@ import {
 } from "./llm.ts";
 
 const MODULE_DIR = dirname(fromFileUrl(import.meta.url));
-const KOBA_ROOT = resolve(join(MODULE_DIR, ".."));
+const KOBA_ROOT = resolve(join(MODULE_DIR, "../.."));
 const DEFAULT_CACHE_ROOT = MODULE_DIR;
 const DEFAULT_OUT_DIR = join(MODULE_DIR, "docs");
 const CONTEXT_FILE = join(MODULE_DIR, "CONTEXT.md");
@@ -159,7 +159,7 @@ async function translateOne(
   logProgress("retrieving reference docs");
   const referenceSections = searchLangDocs(
     allReferenceSections,
-    analysis.concepts.join(" "),
+    analysis.concepts,
     budgets.referenceLimit ?? 6,
   );
   logProgress("retrieving stdlib");
