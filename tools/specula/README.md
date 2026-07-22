@@ -23,17 +23,17 @@ cd tools/specula
 # Stdlib is read from your local Zig installation via `zig env`.
 deno task fetch-docs
 
-# Translate a Vulkan tutorial lesson
+# Translate a Vulkan tutorial lesson (via OpenRouter API key)
 deno task translate <url-or-path>...
+
+# Translate using Antigravity (AGY / OMP harness completion)
+deno task translate:agy <url-or-path>...
+python translate_agy.py <url-or-path>...
 
 # Examples
 deno task translate https://docs.vulkan.org/tutorial/latest/03_Drawing_a_triangle/01_Presentation/00_Swap_chain.html
+deno task translate:agy https://docs.vulkan.org/tutorial/latest/04_Vertex_buffers/00_Vertex_input_description.html
 deno task translate ./my-local-lesson.md --out ./lesson.md
-
-# Translate multiple lessons in one invocation
-deno task translate https://docs.vulkan.org/tutorial/latest/03_Drawing_a_triangle/01_Presentation/00_Swap_chain.html https://docs.vulkan.org/tutorial/latest/03_Drawing_a_triangle/02_Rendering/01_Image_views.html
-```
-
 Translation output defaults to `tools/specula/docs/<slug>.md`. Cache is stored
 under `tools/specula/.cache/`.
 
@@ -62,8 +62,8 @@ Flags:
 - `-o, --out <path>` — output Markdown file (single source only)
 - `-m, --model <id>` — override the LLM model
 - `-k, --api-key <key>` — API key override
+- `--agy, --omp` — force AGY / OMP harness completion (bypasses OpenRouter key)
 - `-p, --project <dir>` — project root for codebase context (default: koba root)
-- `--no-project` — skip project scanning entirely
 - `--out-dir <dir>` — write output into a directory (default:
   `tools/specula/docs`)
 - `--stream` — stream LLM output to stdout

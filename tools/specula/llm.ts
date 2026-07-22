@@ -182,6 +182,7 @@ export async function translateLesson(
     "default";
 
   if (bridgeUrl && bridgeToken && !input.apiKey) {
+    console.error(`[koba-specula] sending request to harness bridge (${bridgeUrl}/v1/tool)...`);
     const response = await fetchWithRetry(`${bridgeUrl}/v1/tool`, {
       method: "POST",
       headers: {
@@ -217,6 +218,7 @@ export async function translateLesson(
     }
 
     const content = json.value.text;
+    console.error(`[koba-specula] received completion response (${content.length} chars)`);
     input.onChunk?.(content);
     return content;
   }
@@ -224,8 +226,10 @@ export async function translateLesson(
   if (!input.apiKey) {
     throw new Error("Missing API key");
   }
+  console.error(
+    `[koba-specula] sending request to ${provider.endpoint} (model: ${model})...`,
+  );
   const response = await fetchWithRetry(provider.endpoint, {
-    method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${input.apiKey}`,

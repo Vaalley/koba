@@ -18,8 +18,10 @@
   "tasks": {
     "fetch-docs": "deno run --allow-read --allow-write --allow-net --allow-run=zig translator.ts fetch-docs",
     "translate": "deno run --allow-read --allow-write --allow-net --allow-env --allow-run=zig translator.ts translate",
+    "translate:agy": "deno run --allow-read --allow-write --allow-net --allow-env --allow-run=zig translator.ts translate --agy",
+    "translate:omp": "deno run --allow-read --allow-write --allow-net --allow-env --allow-run=zig translator.ts translate --omp",
+    "translate-agy": "python translate_agy.py",
     "check": "deno check translator.ts fetcher.ts llm.ts config.ts fetcher_test.ts llm_test.ts",
-    "fmt": "deno fmt",
     "fmt:check": "deno fmt --check",
     "lint": "deno lint",
     "test": "deno test --allow-read --allow-write"

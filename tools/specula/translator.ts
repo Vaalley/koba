@@ -53,6 +53,7 @@ Translate flags:
   -o, --out <path>     Output Markdown file (single source only)
   -m, --model <id>     Override the model (default: ${DEFAULT_MODEL})
   -k, --api-key <key>  API key override
+  --agy, --omp         Force AGY/OMP harness completion (ignores OpenRouter key)
   -p, --project <dir>  Project root for codebase context (default: koba root)
   --no-project         Skip project scanning entirely
   --out-dir <dir>      Write output into a directory (default: tools/specula/docs)
@@ -152,22 +153,30 @@ async function translateOne(
 
   const outputPath = deriveOutputPath(source, outDir, outPath);
 
-  logProgress(`fetching lesson: ${source}`);
+  logProgress(`[1/4] fetching lesson source: ${source}`);
   const lesson = await fetchLessonPage(source);
-  logProgress("analyzing features");
+  logProgress(`  • title: "${lesson.title}" (${lesson.codeBlocks.length} code block(s) extracted)`);
+
+  logProgress("[2/4] analyzing features & matching docs");
   const analysis = analyzeSourceFeatures(lesson.codeBlocks, config);
-  logProgress("retrieving reference docs");
+  logProgress(`  • matched concepts: ${analysis.concepts.slice(0, 8).join(", ")}${analysis.concepts.length > 8 ? "..." : ""}`);
+  logProgress(`  • target stdlib modules: ${analysis.modules.join(", ")}`);
+
   const referenceSections = searchLangDocs(
     allReferenceSections,
     analysis.concepts,
     budgets.referenceLimit ?? 6,
   );
-  logProgress("retrieving stdlib");
+  logProgress(`  • retrieved ${referenceSections.length} language reference section(s)`);
+
   const stdlibSections = await getRelevantStdlib(config, analysis.modules, {
     force,
     cacheRoot: DEFAULT_CACHE_ROOT,
     limit: budgets.stdlibLimit ?? 24,
   });
+  logProgress(`  • retrieved ${stdlibSections.length} stdlib declaration(s)`);
+
+  logProgress("[3/4] assembling prompts & context");
   const promptInput = {
     config,
     lesson,
@@ -187,7 +196,7 @@ async function translateOne(
     console.log("=== User prompt ===");
     console.log(user);
     console.error(
-      `[koba-specula] Estimated tokens: system ${systemTokens}, user ${userTokens}, total ${totalTokens}`,
+      `[koba-specula] estimated tokens: system ${systemTokens}, user ${userTokens}, total ${totalTokens}`,
     );
     return;
   }
@@ -199,8 +208,9 @@ async function translateOne(
     );
   }
 
+  const engineLabel = apiKey ? `OpenRouter (${modelOverride ?? DEFAULT_MODEL})` : "AGY / Harness Bridge";
   logProgress(
-    `calling the LLM (estimated tokens: system ${systemTokens}, user ${userTokens}, total ${totalTokens})`,
+    `[4/4] calling LLM via ${engineLabel} (tokens: system ${systemTokens}, user ${userTokens}, total ${totalTokens})`,
   );
   const markdown = await translateLesson({
     ...promptInput,
@@ -215,7 +225,7 @@ async function translateOne(
   });
   await Deno.mkdir(dirname(outputPath), { recursive: true }).catch(() => {});
   await Deno.writeTextFile(outputPath, markdown);
-  logProgress(`wrote ${outputPath}`);
+  logProgress(`successfully saved translation to ${outputPath} (${markdown.length} bytes)`);
 }
 
 async function runTranslate(args: Record<string, unknown>): Promise<void> {
@@ -260,17 +270,17 @@ async function runTranslate(args: Record<string, unknown>): Promise<void> {
       cacheRoot: DEFAULT_CACHE_ROOT,
     });
   }
-
-  logProgress("retrieving reference docs");
+  logProgress("loading reference documentation cache...");
   const allReferenceSections = await loadReferenceSections(config, {
     force,
     cacheRoot: DEFAULT_CACHE_ROOT,
   });
 
-  logProgress("scanning project");
+  logProgress(`scanning project codebase context under '${projectRoot}'...`);
   const scannedFiles = noProject
     ? []
     : await scanProjectFiles(resolve(projectRoot), config, budgets);
+  logProgress(`scanned ${scannedFiles.length} file(s) for codebase context`);
   const projectFiles: ProjectFile[] = [];
   try {
     const contextContent = await Deno.readTextFile(CONTEXT_FILE);
@@ -289,13 +299,39 @@ async function runTranslate(args: Record<string, unknown>): Promise<void> {
   }
   projectFiles.push(...scannedFiles);
 
+  const forceAgy = Boolean(args.agy || args.omp || args.bridge || args["bridge-url"]);
+  if (typeof args["bridge-url"] === "string") {
+    Deno.env.set("PI_TOOL_BRIDGE_URL", String(args["bridge-url"]));
+  }
+  if (typeof args["bridge-token"] === "string") {
+    Deno.env.set("PI_TOOL_BRIDGE_TOKEN", String(args["bridge-token"]));
+  }
+  if (typeof args["bridge-session"] === "string") {
+    Deno.env.set("PI_TOOL_BRIDGE_SESSION", String(args["bridge-session"]));
+  }
+
   const explicitApiKey = typeof args["api-key"] === "string" && args["api-key"]
     ? String(args["api-key"])
     : undefined;
   const envKey = envApiKey(config);
   const hasBridge = Boolean(Deno.env.get("PI_TOOL_BRIDGE_URL"));
-  const apiKey = explicitApiKey ?? (hasBridge ? undefined : envKey);
 
+  let apiKey: string | undefined = undefined;
+
+  if (forceAgy) {
+    if (!hasBridge) {
+      throw new Error(
+        "AGY mode (--agy/--omp) strictly uses the Antigravity session harness.\n" +
+          "PI_TOOL_BRIDGE_URL is not set in this shell environment.\n" +
+          "To translate using AGY, ask Antigravity directly in your OMP session chat (e.g. 'translate <url> using specula (agy)'), or run inside an active OMP harness session.",
+      );
+    }
+    apiKey = undefined;
+  } else if (hasBridge) {
+    apiKey = explicitApiKey;
+  } else {
+    apiKey = explicitApiKey ?? envKey;
+  }
   const ctx: TranslateContext = {
     config,
     modelOverride,
@@ -340,13 +376,16 @@ async function main(): Promise<void> {
 
   if (command === "translate") {
     const args = parse(rest, {
-      boolean: ["force", "help", "no-project", "stream", "dry-run"],
+      boolean: ["force", "help", "no-project", "stream", "dry-run", "agy", "omp", "bridge"],
       string: [
         "out",
         "model",
         "api-key",
         "project",
         "out-dir",
+        "bridge-url",
+        "bridge-token",
+        "bridge-session",
       ],
       alias: {
         h: "help",
