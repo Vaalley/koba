@@ -1,0 +1,27 @@
+{
+  "name": "koba-lumina",
+  "version": "0.1.0",
+  "description": "Vulkan lesson translator for the koba game engine project.",
+  "license": "MIT",
+  "exports": "./mod.ts",
+  "imports": {
+    "@std/assert": "jsr:@std/assert",
+    "@std/flags": "jsr:@std/flags",
+    "@std/path": "jsr:@std/path"
+  },
+  "fmt": {
+    "exclude": [".cache/", "docs/"]
+  },
+  "lint": {
+    "exclude": [".cache/", "docs/"]
+  },
+  "tasks": {
+    "fetch-docs": "deno run --allow-read --allow-write --allow-net --allow-env --allow-run=zig mod.ts fetch-docs",
+    "translate": "deno run --allow-read --allow-write --allow-net --allow-env --allow-run=zig mod.ts translate",
+    "check": "deno check *.ts",
+    "fmt": "deno fmt",
+    "fmt:check": "deno fmt --check",
+    "lint": "deno lint",
+    "test": "deno test --allow-read --allow-write"
+  }
+}

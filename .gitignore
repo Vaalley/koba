@@ -1,5 +1,6 @@
 .zig-cache
 zig-out
-tools/specula/.cache
+tools/lumina/.cache
+tools/lumina/docs
 __pycache__/
 *.pyc
